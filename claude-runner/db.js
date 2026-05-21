@@ -1547,7 +1547,7 @@ const ALLOWED_TRANSITIONS = {
 };
 
 const issuesRepo = {
-  /** Generate the next issue key for a project (e.g. "EOS-42") */
+  /** Generate the next issue key for a project (e.g. "PROJ-42") */
   async nextKey(project) {
     const { rows } = await pool.query(
       `INSERT INTO issue_sequences (project, last_number)

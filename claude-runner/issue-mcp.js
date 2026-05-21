@@ -87,7 +87,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        key: { type: "string", description: "Issue key (e.g. 'EOS-42')" },
+        key: { type: "string", description: "Issue key (e.g. 'PROJ-42')" },
       },
       required: ["key"],
     },

@@ -137,8 +137,8 @@ When enriching a Jira story:
 ### Traceability Matrix
 | Requirement ID | User Story | Test Case | Status |
 |---------------|------------|-----------|--------|
-| REQ-001 | CER-123 | TC-001, TC-002 | Implemented |
-| REQ-002 | CER-124 | TC-003 | In Progress |
+| REQ-001 | PROJ-123 | TC-001, TC-002 | Implemented |
+| REQ-002 | PROJ-124 | TC-003 | In Progress |
 
 ### Definition of Ready (DoR)
 A story is ready for development when:

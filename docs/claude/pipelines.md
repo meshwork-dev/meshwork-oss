@@ -40,7 +40,7 @@ Phases marked `optional: true` with a `condition` are evaluated against the issu
 
 ### Slack Progress Notifications
 
-After each phase completes and its gate passes, a callback is sent (if `callbackUrl` is set) with pipeline progress. The callback includes a human-readable `message` field formatted as: `"CER-123: Phase 2/6 complete (architecture). Next: implementation."` — suitable for posting directly to Slack.
+After each phase completes and its gate passes, a callback is sent (if `callbackUrl` is set) with pipeline progress. The callback includes a human-readable `message` field formatted as: `"PROJ-123: Phase 2/6 complete (architecture). Next: implementation."` — suitable for posting directly to Slack.
 
 ### Cost Tracking
 

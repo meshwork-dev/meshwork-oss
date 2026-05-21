@@ -343,7 +343,7 @@ Agents participate in multi-agent meetings via the runner's meeting engine. Meet
 
 One agent acts as **chair** (prefers `product-manager` if present, else first participant). The chair:
 - Opens with agenda and context
-- Calls on specific agents: `[CALL: engineer-planner] What's the status on CER-295?`
+- Calls on specific agents: `[CALL: engineer-planner] What's the status on PROJ-295?`
 - Decides who speaks next based on conversation, not fixed order
 - Can ask follow-ups or direct agents to respond to each other
 - Closes topics with `[CLOSE-ITEM: topic name]`

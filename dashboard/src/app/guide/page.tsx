@@ -346,9 +346,9 @@ function SchedulesSection() {
 function APISection() {
   const endpoints = [
     { method: "POST", path: "/agent", desc: "Run any agent directly (no Jira ticket needed)", body: '{ "agent": "engineer-planner", "prompt": "...", "workingDir": "..." }' },
-    { method: "POST", path: "/run", desc: "Jira-driven delivery mode", body: '{ "agent": "engineer-planner", "issueKey": "CER-123", "workingDir": "..." }' },
+    { method: "POST", path: "/run", desc: "Jira-driven delivery mode", body: '{ "agent": "engineer-planner", "issueKey": "PROJ-123", "workingDir": "..." }' },
     { method: "POST", path: "/chat", desc: "Conversational mode with memory", body: '{ "message": "...", "channel": "slack-dev" }' },
-    { method: "POST", path: "/pipeline", desc: "Start a full SDLC pipeline", body: '{ "issueKey": "CER-123", "pipelineType": "new-feature", "workingDir": "..." }' },
+    { method: "POST", path: "/pipeline", desc: "Start a full SDLC pipeline", body: '{ "issueKey": "PROJ-123", "pipelineType": "new-feature", "workingDir": "..." }' },
     { method: "GET", path: "/health", desc: "Queue status (no auth required)", body: null },
     { method: "GET", path: "/agents", desc: "List all available agents", body: null },
     { method: "GET", path: "/jobs/:id", desc: "Get job status", body: null },

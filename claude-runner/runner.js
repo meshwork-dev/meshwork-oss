@@ -234,7 +234,7 @@ function loadConfig() {
       outcomesWebhookUrl: fileConfig.meetings?.outcomesWebhookUrl || null,
       confluenceSpace: fileConfig.meetings?.confluenceSpace || "CE",
       confluenceParentPage: fileConfig.meetings?.confluenceParentPage || "Meetings",
-      jiraProject: fileConfig.meetings?.jiraProject || "CER",
+      jiraProject: fileConfig.meetings?.jiraProject || "PROJ",
       scheduledMeetings: fileConfig.meetings?.scheduledMeetings || [],
       allowedTools: fileConfig.meetings?.allowedTools || [],
       autoDispatchActions: fileConfig.meetings?.autoDispatchActions !== false,
@@ -475,7 +475,7 @@ function resolveJiraProject(productIdOrWorkingDir) {
   if (productIdOrWorkingDir) {
     product = products.get(productIdOrWorkingDir) || resolveProduct(productIdOrWorkingDir);
   }
-  return product?.jira?.projectKey || config.meetings?.jiraProject || "CER";
+  return product?.jira?.projectKey || config.meetings?.jiraProject || "PROJ";
 }
 
 /**
@@ -1675,7 +1675,7 @@ function getMeetingProductContext(meeting) {
     `Product: ${product.name || product.id}`,
   ];
   if (product.jira?.projectKey) {
-    lines.push(`Jira Project: ${product.jira.projectKey} — ALWAYS use project key "${product.jira.projectKey}" for ALL Jira operations: creating issues, JQL queries, transitions, comments, and searches. Do NOT use any other project key (e.g. CER). Every issue you create or reference MUST be in ${product.jira.projectKey}.`);
+    lines.push(`Jira Project: ${product.jira.projectKey} — ALWAYS use project key "${product.jira.projectKey}" for ALL Jira operations: creating issues, JQL queries, transitions, comments, and searches. Do NOT use any other project key. Every issue you create or reference MUST be in ${product.jira.projectKey}.`);
   }
   if (product.confluence?.space) {
     lines.push(`Confluence Space: ${product.confluence.space}`);
@@ -4494,10 +4494,10 @@ function preserveBranchOnFailure(pipeline, phase) {
  * (b) the feature branch's LOCAL ref is gone (someone deleted the branch).
  *
  * NOTE: We deliberately do NOT check the remote ref here. Fresh pipelines run
- * for many minutes on a local-only branch before any push happens (EOS-621
- * never pushed at all). Treating remote-absence as "gone" reaped active
- * worktrees mid-pipeline, which then broke the final merge step with
- * "No worktree found" (see EOS-598/EOS-621 incident, 2026-04-26).
+ * for many minutes on a local-only branch before any push happens (some
+ * pipelines never push at all). Treating remote-absence as "gone" reaped
+ * active worktrees mid-pipeline, which then broke the final merge step with
+ * "No worktree found".
  */
 function reconcileMergedWorktrees() {
   const { execSync } = require("child_process");
@@ -5619,8 +5619,8 @@ async function advancePipeline(pipeline) {
     // Auto-transition Jira issue to Done only after the merge into dev has succeeded.
     // Guard 1: any phase with a FAIL verdict blocks the transition.
     // Guard 2: if the merge didn't succeed, leave Jira un-Done — preserves the
-    // CER-530-style fix (no silent Done when the code never reaches the integration
-    // branch). A human still needs to act on `pipeline.mergeError`.
+    // No silent Done when the code never reaches the integration branch.
+    // A human still needs to act on `pipeline.mergeError`.
     const anyPhaseFailed = pipeline.phases.some(ph =>
       ph.gateResult && ph.gateResult.passed === false
     );
@@ -6020,9 +6020,9 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
   // `retry-pending` (loadStateFromDB), while the pipeline's own resume logic
   // ALSO restarts phase X with a fresh job 2. When job 1 eventually finishes,
   // it would re-fire phase completion and (incorrectly) advance the pipeline
-  // past phases that are already running. Concrete repro: EOS-653 on 2026-04-26
-  // leapt from completed code-review straight to verify, leaving code-review
-  // running and the pipeline marked completed before verify finished.
+  // past phases that are already running. Without this guard, the pipeline
+  // can leap from a completed phase straight to a later one, leaving the
+  // current phase running and the pipeline marked completed prematurely.
   if (phase.status === "completed" || phase.status === "failed" || phase.status === "skipped") {
     console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} ignoring stale completion for phase ${phase.name} (status=${phase.status}, jobId=${job.jobId})`);
     return;
@@ -6757,7 +6757,7 @@ async function loadStateFromDB() {
       // (mitigated by the guard at the top of that function). Two writers
       // against the same worktree is still a correctness risk; the proper fix
       // is to skip retry-pending here when job.pipelineId is set and let the
-      // pipeline-resume path own re-execution. EOS-653 (2026-04-26) hit this.
+      // pipeline-resume path own re-execution.
       if (job.status === "running" || job.status === "queued" || job.status === "retry-pending" || job.status === "quality-gate-retry") {
         job.status = "failed";
         job.error = "Process interrupted (runner restart)";
@@ -8409,7 +8409,7 @@ function resolveProductForIssueKey(issueKey) {
  * being worked. This is the core of the agent-label reconciler — used both
  * by the periodic sweep (B) and the post-job-completion hot path (A).
  *
- * @param {string} issueKey - Jira issue key (e.g., "EOS-664")
+ * @param {string} issueKey - Jira issue key (e.g., "PROJ-123")
  * @param {object} opts
  * @param {string} [opts.excludeAgent] - Skip this agent (avoid self-redispatch when called from job completion)
  * @param {string} [opts.reason] - Logged with dispatch (e.g., "post-job-completion", "reconciler-sweep")
