@@ -1,3 +1,14 @@
+# CertPilot-AutoDev — Docker Compose template
+#
+# Postgres is bundled by default (profile: bundled-db). To run against an
+# external Postgres instance, start the stack with:
+#
+#   docker compose --profile external-db up -d
+#
+# and set RUNNER_DB_* env vars in `.env` pointing at your external Postgres host.
+#
+# Setup is driven by `./setup.sh`, which is idempotent and safe to re-run.
+
 services:
   runner:
     build: ./claude-runner
@@ -7,31 +18,43 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
     deploy:
       resources:
         limits:
-          memory: 12g
+          memory: ${RUNNER_MEMORY_LIMIT:-8g}
     ports:
-      - "3210:3210"
+      - "${RUNNER_PORT:-3210}:3210"
     env_file:
       - .env
     environment:
+      - ATTIO_API_KEY=${ATTIO_API_KEY:-}
+      - JIRA_DOMAIN=${JIRA_DOMAIN:-}
       - JIRA_EMAIL=${JIRA_EMAIL:-}
       - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - SNYK_TOKEN=${SNYK_TOKEN:-}
+      - ZAI_API_KEY=${ZAI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
-      - RUNNER_DB_HOST=postgres
-      - RUNNER_DB_PORT=5432
-      - RUNNER_DB_NAME=runner
-      - RUNNER_DB_USER=runner
+      - CLAUDE_CODE_FORK_SUBAGENT=1
+      - MCP_CONNECTION_NONBLOCKING=true
+      - RUNNER_DB_HOST=${RUNNER_DB_HOST:-postgres}
+      - RUNNER_DB_PORT=${RUNNER_DB_PORT:-5432}
+      - RUNNER_DB_NAME=${RUNNER_DB_NAME:-runner}
+      - RUNNER_DB_USER=${RUNNER_DB_USER:-runner}
       - RUNNER_DB_PASSWORD=${RUNNER_DB_PASSWORD:-runner_secure_password}
+      - HOST_HOME=${HOME}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ${HOME}/.claude:/home/node/.claude
       - ${HOME}/.claude.json:/home/node/.claude.json.host:ro
       - ${HOME}/claude-runner-logs:/data/logs
       - ./shared-skills:/shared-skills:ro
-      - ./products:/products:ro
-      # __PLUGIN_VOLUMES__
-      # __PROJECT_VOLUMES__
+      # Primary product working directory; setup.sh writes per-product mounts
+      # into docker-compose.override.yml as products are onboarded.
+      - "${PROJECT_DIR:?Set PROJECT_DIR in .env or run ./setup.sh}:/projects/default"
       - ${HOME}/certpilot-worktrees:/data/worktrees
     stop_grace_period: 15s
     networks:
@@ -42,9 +65,9 @@ services:
     container_name: certpilot-dashboard
     restart: unless-stopped
     ports:
-      - "3100:3100"
+      - "${DASHBOARD_PORT:-3100}:3100"
     environment:
-      - NEXT_PUBLIC_RUNNER_URL=http://localhost:3210
+      - NEXT_PUBLIC_RUNNER_URL=http://localhost:${RUNNER_PORT:-3210}
       - PORT=3100
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD}
       - RUNNER_SECRET=${RUNNER_SECRET}
@@ -57,25 +80,72 @@ services:
     image: postgres:16-alpine
     container_name: certpilot-postgres
     restart: unless-stopped
+    profiles: ["bundled-db"]
     environment:
-      - POSTGRES_USER=runner
-      - POSTGRES_PASSWORD=${RUNNER_DB_PASSWORD:-runner_secure_password}
-      - POSTGRES_DB=runner
+      - POSTGRES_USER=${POSTGRES_USER:-n8n}
+      - POSTGRES_PASSWORD=${N8N_DB_PASSWORD:-n8n_secure_password}
+      - POSTGRES_DB=${POSTGRES_DB:-n8n}
+      - RUNNER_DB_PASSWORD=${RUNNER_DB_PASSWORD:-runner_secure_password}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - n8n-postgres-data:/var/lib/postgresql/data
+      - ./claude-runner/init-runner-db.sh:/docker-entrypoint-initdb.d/02-init-runner-db.sh:ro
     networks:
       - certpilot
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U runner"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-n8n}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # __N8N_SERVICE__
-  # __NGROK_SERVICE__
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    volumes:
+      - ${HOME}/.n8n:/home/node/.n8n
+    environment:
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-strongpassword}
+      - WEBHOOK_URL=${N8N_PUBLIC_URL:-http://localhost:5678}
+      - N8N_EDITOR_BASE_URL=${N8N_PUBLIC_URL:-http://localhost:5678}
+      - DB_TYPE=${N8N_DB_TYPE:-postgresdb}
+      - DB_POSTGRESDB_HOST=${N8N_DB_HOST:-postgres}
+      - DB_POSTGRESDB_PORT=${N8N_DB_PORT:-5432}
+      - DB_POSTGRESDB_DATABASE=${N8N_DB_NAME:-n8n}
+      - DB_POSTGRESDB_USER=${N8N_DB_USER:-n8n}
+      - DB_POSTGRESDB_PASSWORD=${N8N_DB_PASSWORD:-n8n_secure_password}
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+    networks:
+      - certpilot
+
+  # Optional: ngrok tunnel for exposing N8N webhooks publicly.
+  # Enable with `docker compose --profile tunnel up -d`.
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: ngrok-n8n
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    depends_on:
+      - n8n
+    command: ["start", "--all", "--config", "/etc/ngrok.yml"]
+    volumes:
+      - ./n8n/ngrok.yml:/etc/ngrok.yml:ro
+    networks:
+      - certpilot
 
 volumes:
-  postgres-data:
+  n8n-postgres-data:
 
 networks:
   certpilot:

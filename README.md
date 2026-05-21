@@ -119,6 +119,8 @@ curl -X POST http://localhost:3210/api/chat/send \
 | `RUNNER_SECRET` | Yes | API authentication secret |
 | `DASHBOARD_PASSWORD` | Yes | Dashboard login password |
 | `RUNNER_DB_PASSWORD` | No | PostgreSQL password (default: `runner_secure_password`) |
+| `RUNNER_DB_HOST` | No | Postgres host. `postgres` (bundled) or your external host. |
+| `POSTGRES_MODE` | No | `bundled` (default) or `external`. Controls whether the bundled container starts. |
 | `JIRA_DOMAIN` | No | Jira Cloud URL (enables Jira integration) |
 | `JIRA_EMAIL` | No | Jira account email |
 | `JIRA_API_TOKEN` | No | Jira API token |
@@ -143,7 +145,11 @@ RUNNER_SECRET=dev-secret node runner.js
 # Run dashboard locally
 cd dashboard && npm install && npm run dev
 
-# Docker (full stack)
+# Docker (full stack, bundled Postgres)
+docker compose --profile bundled-db build
+docker compose --profile bundled-db up -d
+
+# Docker (external Postgres — point RUNNER_DB_HOST at it in .env)
 docker compose build && docker compose up -d
 
 # View logs

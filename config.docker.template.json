@@ -1,0 +1,491 @@
+{
+  "port": 3210,
+  "host": "0.0.0.0",
+  "jobTimeoutMinutes": 60,
+  "maxConcurrency": 2,
+  "maxConcurrencyPerProduct": 1,
+  "maxRetries": 3,
+  "sseEnabled": true,
+  "convStaleDays": 30,
+  "jobStateRetentionDays": 7,
+  "convTurns": 16,
+  "convMaxChars": 24000,
+  "idempotencyTtlHours": 72,
+  "workingDir": "/projects/supplychain-secure",
+  "callbackUrl": "__N8N_PUBLIC_URL__/webhook/runner/callback",
+  "internalCallbackUrl": "http://n8n:5678/webhook/runner/callback",
+  "logDir": "/data/logs",
+  "convDir": "/data/logs/conversations",
+  "sharedSkillsDir": "/shared-skills",
+  "allowedRoots": ["/projects"],
+  "pathMappings": {
+    "__WORKING_DIR__": "/projects/default"
+  },
+  "tokenPricing": {
+    "inputPerMillion": 15.00,
+    "outputPerMillion": 75.00
+  },
+  "protectHealthEndpoint": false,
+  "protectDashboard": false,
+  "logRetentionDays": 30,
+  "alerting": {
+    "slackWebhookUrl": null
+  },
+  "budget": {
+    "enabled": true,
+    "dailyLimitUsd": 300,
+    "hourlyLimitUsd": 100
+  },
+  "dashboardOrigins": ["http://localhost:3100"],
+  "dashboardUrl": "http://localhost:3100",
+  "providers": {
+    "claude": {
+      "baseUrl": null,
+      "authTokenEnvVar": "ANTHROPIC_API_KEY"
+    },
+    "zai": {
+      "baseUrl": "https://api.z.ai/api/anthropic",
+      "authTokenEnvVar": "ZAI_API_KEY",
+      "timeoutMs": 3000000,
+      "modelMapping": {
+        "opus": "GLM-5.1",
+        "sonnet": "GLM-5.1",
+        "haiku": "GLM-5.1"
+      }
+    }
+  },
+  "claude": {
+    "command": "claude",
+    "baseArgs": ["--dangerously-skip-permissions"],
+    "models": {
+      "opus": "claude-opus-4-7",
+      "sonnet": "claude-sonnet-4-6",
+      "haiku": "claude-haiku-4-5-20251001"
+    }
+  },
+  "routing": {
+    "enabled": true,
+    "agentToProvider": {
+      "creative-assets": "zai"
+    },
+    "agentToModel": {
+      "engineer-planner": "opus",
+      "engineer-implementer": "sonnet",
+      "engineer-reviewer": "opus",
+      "product-manager": "opus",
+      "marketing": "sonnet",
+      "bug-triage": "opus",
+      "sprint-reporter": "sonnet",
+      "ui-engineer": "sonnet",
+      "creative-assets": "haiku",
+      "sales-development": "opus",
+      "sales-researcher": "sonnet",
+      "sales-outreach": "sonnet",
+      "ba-agent": "opus",
+      "architect-jets": "opus",
+      "ux-agent": "sonnet",
+      "qa-agent": "sonnet",
+      "security-agent": "sonnet",
+      "ask-tom-agent": "opus",
+      "e2e-builder": "opus",
+      "uat-agent": "sonnet",
+      "user-guide-agent": "sonnet",
+      "video-renderer": "sonnet"
+    },
+    "agentEffort": {
+      "engineer-planner": "xhigh",
+      "architect-jets": "xhigh",
+      "product-manager": "xhigh",
+      "engineer-reviewer": "xhigh",
+      "ask-tom-agent": "xhigh",
+      "e2e-builder": "xhigh",
+      "engineer-implementer": "high"
+    },
+    "modeDefaults": {
+      "delivery": "sonnet",
+      "chat": "haiku"
+    },
+    "agentToolRestrictions": {
+      "engineer-reviewer": {
+        "disallowedTools": ["Edit", "Write", "NotebookEdit", "Bash"]
+      }
+    }
+  },
+  "qualityGate": {
+    "enabled": true,
+    "runAfterAgents": ["engineer-implementer", "e2e-builder"],
+    "checks": [
+      { "name": "type-check", "cmd": "npm run type-check", "required": true },
+      { "name": "lint", "cmd": "npm run lint", "required": true },
+      { "name": "test", "cmd": "npm test", "required": true }
+    ],
+    "maxRetries": 2,
+    "retryWithContext": true
+  },
+  "fixLoop": {
+    "enabled": true,
+    "maxAttempts": 3,
+    "gateTypes": ["quality-gate"]
+  },
+  "chrome": {
+    "enabled": true,
+    "acceptanceAgents": ["product-manager", "uat-agent", "user-guide-agent"]
+  },
+  "agentMcps": {
+    "_default": null,
+    "engineer-planner": ["memory", "runner-admin", "github", "sequential-thinking", "context7"],
+    "engineer-implementer": ["memory", "runner-admin", "github", "context7"],
+    "engineer-reviewer": ["memory", "runner-admin", "github"],
+    "ui-engineer": ["memory", "runner-admin", "github", "context7", "playwright"],
+    "product-manager": ["memory", "runner-admin"],
+    "bug-triage": ["memory", "runner-admin", "github"],
+    "security-agent": ["memory", "runner-admin", "snyk", "github"],
+    "marketing": ["memory", "runner-admin", "fetch"],
+    "creative-assets": ["memory", "runner-admin", "n8n-zai-mcp"],
+    "sprint-reporter": ["memory", "runner-admin"],
+    "sales-development": ["memory", "runner-admin", "attio-mcp"],
+    "sales-researcher": ["memory", "runner-admin", "attio-mcp", "fetch"],
+    "sales-outreach": ["memory", "runner-admin", "attio-mcp"],
+    "ba-agent": ["memory", "runner-admin", "context7"],
+    "architect-jets": ["memory", "runner-admin", "context7", "sequential-thinking"],
+    "ux-agent": ["memory", "runner-admin", "context7"],
+    "qa-agent": ["memory", "runner-admin", "playwright", "github"],
+    "ask-tom-agent": ["memory", "runner-admin", "sequential-thinking", "github"],
+    "e2e-builder": ["memory", "runner-admin", "github", "context7", "playwright"],
+    "uat-agent": ["memory", "runner-admin", "playwright", "github"]
+  },
+  "subtasks": {
+    "enabled": true,
+    "maxConcurrency": 3,
+    "maxPerParent": 3,
+    "maxDepth": 3,
+    "parallelAgents": ["engineer-implementer", "ui-engineer", "creative-assets", "marketing", "sales-researcher", "sales-outreach"]
+  },
+  "teams": {
+    "enabled": true,
+    "teamLeads": {
+      "engineer-planner": {
+        "teammates": ["engineer-implementer", "ui-engineer", "engineer-reviewer"],
+        "teammateMode": "in-process"
+      },
+      "product-manager": {
+        "teammates": ["ba-agent"],
+        "teammateMode": "in-process"
+      },
+      "sales-development": {
+        "teammates": ["sales-researcher", "sales-outreach"],
+        "teammateMode": "in-process"
+      }
+    }
+  },
+  "pipelines": {
+    "new-feature": {
+      "description": "Lean execution: implement → code-review → verify. Planning/requirements/UX happen in agent meetings.",
+      "phases": [
+        {
+          "name": "implementation",
+          "agent": "engineer-implementer",
+          "model": "sonnet",
+          "team": false,
+          "worktree": true,
+          "gate": { "type": "quality-gate" },
+          "contextExtract": { "type": "jira-comments", "prefixes": ["[AUTO-PLAN]", "[AUTO-IMPLEMENT]"] }
+        },
+        {
+          "name": "code-review",
+          "agent": "engineer-reviewer",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-REVIEW]" }
+        },
+        {
+          "name": "verify",
+          "agent": "qa-agent",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-VERIFY]" }
+        }
+      ]
+    },
+    "bug-fix": {
+      "description": "Lean bug fix: implement + code review + verify",
+      "phases": [
+        {
+          "name": "implementation",
+          "agent": "engineer-implementer",
+          "model": "sonnet",
+          "team": false,
+          "worktree": true,
+          "gate": { "type": "quality-gate" }
+        },
+        {
+          "name": "code-review",
+          "agent": "engineer-reviewer",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-REVIEW]" }
+        },
+        {
+          "name": "verify",
+          "agent": "qa-agent",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-VERIFY]" }
+        }
+      ]
+    },
+    "security-fix": {
+      "description": "Security vulnerability fix",
+      "phases": [
+        {
+          "name": "implementation",
+          "agent": "engineer-implementer",
+          "model": "sonnet",
+          "team": false,
+          "worktree": true,
+          "gate": { "type": "quality-gate" }
+        },
+        {
+          "name": "security-review",
+          "agent": "security-agent",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-SECURITY-REVIEW]" }
+        },
+        {
+          "name": "verify",
+          "agent": "qa-agent",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-VERIFY]" }
+        }
+      ]
+    }
+  },
+  "dependencyGating": {
+    "enabled": true,
+    "checkGitMerge": true,
+    "recheckIntervalSeconds": 60,
+    "maxBlockedMinutes": 120
+  },
+  "worktrees": {
+    "enabled": true,
+    "baseDir": "/data/worktrees",
+    "maxPerRepo": 20,
+    "pruneOnStartup": true
+  },
+  "sprintRunner": {
+    "enabled": true,
+    "intervalMinutes": 10,
+    "dispatchStatuses": ["To Do"],
+    "skipLabels": ["on-hold", "blocked"],
+    "maxDispatchPerCycle": 5,
+    "dryRun": false
+  },
+  "agentLabelReconciler": {
+    "enabled": true,
+    "intervalMinutes": 15,
+    "idempotencyMinutes": 30,
+    "lookbackDays": 14,
+    "maxPerProductCycle": 10,
+    "skipLabels": ["on-hold", "blocked", "meeting-pending-approval", "blocked-*", "needs-operator-*"]
+  },
+  "scheduler": {
+    "accelerateOnCompletion": true,
+    "accelerationDelayMs": 300000,
+    "glmReadinessCheck": false,
+    "glmModel": "GLM-5.1"
+  },
+  "meetings": {
+    "contextWebhookUrl": "http://n8n:5678/webhook/meeting/context",
+    "outcomesWebhookUrl": "http://n8n:5678/webhook/meeting/outcomes",
+    "confluenceSpace": "CE",
+    "confluenceParentPage": "Meetings",
+    "jiraProject": "__JIRA_PROJECT_KEY__",
+    "scheduledMeetings": [
+      {
+        "name": "Daily Standup",
+        "cron": "0 9 * * 1-5",
+        "topic": "Daily standup: What did we accomplish yesterday? What are we working on today? Any blockers?",
+        "agents": ["product-manager", "engineer-planner", "engineer-implementer", "qa-agent"],
+        "maxRounds": 2,
+        "telegramChat": "engineering"
+      },
+      {
+        "name": "Weekly Planning",
+        "cron": "0 10 * * 1",
+        "topic": "Weekly planning: Review sprint progress, prioritize upcoming work, identify risks and dependencies.",
+        "agents": ["product-manager", "engineer-planner", "architect-jets", "engineer-implementer", "engineer-reviewer", "security-agent", "qa-agent"],
+        "maxRounds": 3,
+        "telegramChat": "engineering"
+      }
+    ],
+    "allowedTools": [
+      "mcp__n8n-jira-mcp__search_issues",
+      "mcp__n8n-jira-mcp__get_issue",
+      "mcp__n8n-jira-mcp__add_comment",
+      "mcp__n8n-jira-mcp__get_transitions",
+      "mcp__n8n-jira-mcp__transition_issue",
+      "mcp__n8n-jira-mcp__list_sprints",
+      "mcp__n8n-jira-mcp__list_boards",
+      "mcp__n8n-jira-mcp__get_board",
+      "mcp__n8n-jira-mcp__list_sprints_for_board",
+      "mcp__n8n-jira-mcp__get_sprint",
+      "mcp__n8n-jira-mcp__get_sprint_issues",
+      "mcp__n8n-jira-mcp__get_board_backlog",
+      "mcp__n8n-jira-mcp__move_issues_to_sprint",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "autoDispatchActions": true,
+    "defaultTelegramChatId": "__TELEGRAM_ADMIN_CHAT_ID__",
+    "actionItemTiers": {
+      "storyCreators": ["ba-agent", "product-manager"],
+      "enrichers": ["ux-agent", "engineer-planner", "architect-jets", "security-agent", "qa-agent", "ui-engineer", "ask-tom-agent"]
+    }
+  },
+  "agentLabels": {
+    "agent:planner": "engineer-planner",
+    "agent:implementer": "engineer-implementer",
+    "agent:reviewer": "engineer-reviewer",
+    "agent:pm": "product-manager",
+    "agent:ui": "ui-engineer",
+    "agent:marketing": "marketing",
+    "agent:creative-assets": "creative-assets",
+    "agent:bug-triage": "bug-triage",
+    "agent:security": "security-agent",
+    "agent:sprint-report": "sprint-reporter",
+    "agent:standup": "sprint-reporter",
+    "agent:sales-dev": "sales-development",
+    "agent:sales-research": "sales-researcher",
+    "agent:sales-outreach": "sales-outreach",
+    "agent:ba": "ba-agent",
+    "agent:architect": "architect-jets",
+    "agent:ux": "ux-agent",
+    "agent:qa": "qa-agent",
+    "agent:security-review": "security-agent",
+    "agent:troubleshoot": "ask-tom-agent",
+    "agent:e2e-builder": "e2e-builder",
+    "agent:uat": "uat-agent",
+    "agent:user-guide": "user-guide-agent",
+    "agent:video-renderer": "video-renderer",
+    "agent:engineer-planner": "engineer-planner",
+    "agent:engineer-implementer": "engineer-implementer",
+    "agent:engineer-reviewer": "engineer-reviewer",
+    "agent:product-manager": "product-manager",
+    "agent:ui-engineer": "ui-engineer",
+    "agent:ba-agent": "ba-agent",
+    "agent:architect-jets": "architect-jets",
+    "agent:ux-agent": "ux-agent",
+    "agent:qa-agent": "qa-agent",
+    "agent:security-agent": "security-agent",
+    "agent:sprint-reporter": "sprint-reporter",
+    "agent:sales-development": "sales-development",
+    "agent:sales-researcher": "sales-researcher",
+    "agent:sales-outreach": "sales-outreach",
+    "agent:ask-tom-agent": "ask-tom-agent",
+    "agent:uat-agent": "uat-agent",
+    "agent:user-guide-agent": "user-guide-agent"
+  },
+  "localTeamMembers": {
+    "enabled": false,
+    "mode": "qwen-code",
+    "agents": ["sprint-reporter"],
+    "endpoint": "http://host.docker.internal:1234/v1/chat/completions",
+    "dockerEndpoint": "http://host.docker.internal:1234/v1/chat/completions",
+    "model": "qwen/qwen3-coder-30b",
+    "agentModels": {
+      "engineer-implementer": { "model": "qwen/qwen3-coder-30b", "maxOutputTokens": 16384, "tier": "heavy" },
+      "engineer-reviewer": { "model": "openai/gpt-oss-20b", "maxOutputTokens": 8192, "tier": "medium" },
+      "ba-agent": { "model": "openai/gpt-oss-20b", "maxOutputTokens": 8192, "tier": "medium" },
+      "sprint-reporter": { "model": "glm-4-32b-0414", "maxOutputTokens": 4096, "tier": "light" }
+    },
+    "timeoutMs": 300000,
+    "maxOutputTokens": 16384,
+    "fallbackToClaude": true,
+    "qwenCode": {
+      "command": "qwen",
+      "baseArgs": ["--yolo", "--openai-base-url", "http://host.docker.internal:1234/v1", "--openai-api-key", "lm-studio", "--auth-type", "openai"],
+      "dockerBaseArgs": ["--yolo", "--openai-base-url", "http://host.docker.internal:1234/v1", "--openai-api-key", "lm-studio", "--auth-type", "openai"]
+    }
+  },
+  "contextBridge": {
+    "enabled": true,
+    "maxSummaryWords": 300,
+    "compactMaxWords": 120,
+    "phaseExtractors": {
+      "triage": {
+        "sections": ["decisions", "selectedPhases", "risks", "handoff"],
+        "instruction": "Extract: key decisions, which pipeline phases were selected and why, risks/blockers identified, and specific handoff notes for the next phase."
+      },
+      "requirements": {
+        "sections": ["acceptanceCriteria", "nfrs", "assumptions", "handoff"],
+        "instruction": "Extract: acceptance criteria (numbered), non-functional requirements, assumptions made, and handoff notes for architecture/implementation."
+      },
+      "architecture": {
+        "sections": ["decisions", "components", "interfaces", "risks", "handoff"],
+        "instruction": "Extract: architecture decisions (with rationale), key components/services, interfaces/APIs defined, technical risks, and implementation handoff notes."
+      },
+      "ux-design": {
+        "sections": ["components", "interactions", "accessibility", "handoff"],
+        "instruction": "Extract: UI components specified, key interactions/flows, accessibility requirements, and implementation handoff (design tokens, breakpoints, etc)."
+      },
+      "implementation": {
+        "sections": ["filesChanged", "approach", "testsCoverage", "handoff"],
+        "instruction": "Extract: files created/modified (list paths), implementation approach taken, test coverage added, and notes for reviewer."
+      },
+      "code-review": {
+        "sections": ["verdict", "issues", "suggestions"],
+        "instruction": "Extract: review verdict (approve/request-changes), issues found with severity, and improvement suggestions."
+      },
+      "security-review": {
+        "sections": ["verdict", "vulnerabilities", "recommendations"],
+        "instruction": "Extract: security verdict, vulnerabilities found (with CVSS if available), and remediation recommendations."
+      },
+      "verify": {
+        "sections": ["testResults", "coverage", "regressions", "browserTests", "issues"],
+        "instruction": "Extract: test results summary (pass/fail counts), coverage metrics, regression status, browser/Playwright test results if run, and issues/bugs found."
+      },
+      "acceptance": {
+        "sections": ["verdict", "releaseNotes", "followUp"],
+        "instruction": "Extract: acceptance verdict, release notes summary, and follow-up items."
+      }
+    }
+  },
+  "preRead": {
+    "enabled": false,
+    "endpoint": "http://host.docker.internal:1234/v1/chat/completions",
+    "dockerEndpoint": "http://host.docker.internal:1234/v1/chat/completions",
+    "model": "qwen/qwen3-coder-30b",
+    "agents": [
+      "engineer-planner",
+      "architect-jets",
+      "ba-agent",
+      "bug-triage",
+      "security-agent",
+      "ask-tom-agent",
+      "product-manager",
+      "sprint-reporter"
+    ],
+    "maxFiles": 40,
+    "maxFileLines": 200,
+    "maxTotalChars": 80000,
+    "timeoutMs": 120000,
+    "scanPatterns": [
+      "package.json",
+      "tsconfig.json",
+      "README.md",
+      "src/**/*.ts",
+      "src/**/*.tsx",
+      "app/**/*.ts",
+      "app/**/*.tsx",
+      "lib/**/*.ts",
+      "lib/**/*.tsx",
+      "components/**/*.tsx",
+      "prisma/schema.prisma"
+    ],
+    "excludePatterns": [
+      "node_modules",
+      ".next",
+      "dist",
+      ".git",
+      "coverage",
+      "__tests__"
+    ]
+  }
+}
