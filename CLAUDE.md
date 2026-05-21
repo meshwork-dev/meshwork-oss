@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-Guidance for Claude Code working in a CertPilot-AutoDev deployment.
+Guidance for Claude Code working in a OrchestraCode-AutoDev deployment.
 
 ## Project Overview
 
-CertPilot-AutoDev is a job orchestration platform that connects Claude Code,
+OrchestraCode-AutoDev is a job orchestration platform that connects Claude Code,
 optional issue trackers (Jira), optional chat/notification channels
 (Telegram, Slack, Discord), and N8N workflows for automated software-development
 cycles. Tasks enter from webhooks, schedulers, or chat DMs; the Claude Runner

@@ -1,5 +1,5 @@
 # Reliability & Infrastructure Reference
-> Referenced from CLAUDE.md. This file contains detailed documentation for reliability features, hooks, the CertPilot plugin, Claude execution internals, and key runner patterns.
+> Referenced from CLAUDE.md. This file contains detailed documentation for reliability features, hooks, the OrchestraCode plugin, Claude execution internals, and key runner patterns.
 
 ## Reliability
 
@@ -49,7 +49,7 @@ The plugin includes Claude Code hooks that run during agent sessions.
 
 | Hook | Purpose |
 |------|---------|
-| `on_stop.py` | Posts completion notification to `$CERTPILOT_CALLBACK_URL` if set |
+| `on_stop.py` | Posts completion notification to `$ORCHESTRACODE_CALLBACK_URL` if set |
 
 ### Runner Quality Gates vs Plugin Hooks
 
@@ -59,14 +59,14 @@ These serve complementary purposes:
 
 Both remain active. Hooks provide real-time safety, quality gates provide final validation.
 
-## CertPilot Plugin
+## OrchestraCode Plugin
 
-All agents, skills, commands, and hooks are packaged as a Claude Code plugin in `certpilot-plugin/`.
+All agents, skills, commands, and hooks are packaged as a Claude Code plugin in `orchestracode-plugin/`.
 
 ### Plugin Structure
 
 ```
-certpilot-plugin/
+orchestracode-plugin/
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin manifest
 ├── .mcp.json                # MCP server references (Jira, Z.ai)
@@ -86,10 +86,10 @@ certpilot-plugin/
 
 ```bash
 # Install in a project
-claude plugin install /path/to/certpilot-plugin
+claude plugin install /path/to/orchestracode-plugin
 
 # Or use directly
-claude --plugin-dir /path/to/certpilot-plugin
+claude --plugin-dir /path/to/orchestracode-plugin
 ```
 
 ### Development

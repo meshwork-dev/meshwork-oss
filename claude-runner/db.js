@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * PostgreSQL data access layer for the CertPilot runner.
+ * PostgreSQL data access layer for the OrchestraCode runner.
  *
  * Usage:
  *   const db = require("./db");

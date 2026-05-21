@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stop hook: Post completion notification to callback URL.
 
-When CERTPILOT_CALLBACK_URL is set (for interactive sessions outside the runner),
+When ORCHESTRACODE_CALLBACK_URL is set (for interactive sessions outside the runner),
 posts a completion notification. The runner handles its own callbacks, so this
 hook is a no-op when invoked from runner-managed sessions.
 """
@@ -16,7 +16,7 @@ import urllib.error
 def main():
     try:
         input_data = json.load(sys.stdin)
-        callback_url = os.environ.get("CERTPILOT_CALLBACK_URL")
+        callback_url = os.environ.get("ORCHESTRACODE_CALLBACK_URL")
 
         if not callback_url:
             # No callback configured - runner handles its own callbacks
@@ -27,12 +27,12 @@ def main():
         session_id = os.environ.get("CLAUDE_SESSION_ID", "unknown")
 
         payload = json.dumps({
-            "source": "certpilot-plugin-stop-hook",
+            "source": "orchestracode-plugin-stop-hook",
             "sessionId": session_id,
             "stopReason": stop_reason,
         }).encode("utf-8")
 
-        secret = os.environ.get("CERTPILOT_CALLBACK_SECRET", "")
+        secret = os.environ.get("ORCHESTRACODE_CALLBACK_SECRET", "")
         headers = {
             "Content-Type": "application/json",
         }
@@ -49,7 +49,7 @@ def main():
         print(json.dumps({}))
 
     except Exception as e:
-        print(json.dumps({"systemMessage": f"CertPilot on_stop warning: {e}"}))
+        print(json.dumps({"systemMessage": f"OrchestraCode on_stop warning: {e}"}))
 
     sys.exit(0)
 

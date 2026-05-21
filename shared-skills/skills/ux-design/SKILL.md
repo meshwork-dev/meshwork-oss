@@ -368,8 +368,8 @@ This command:
 
 **Examples per product:**
 ```bash
-# CertPilot
-python3 shared-skills/skills/ux-design/scripts/search.py "compliance SaaS dashboard B2B security professional" --design-system -p "CertPilot"
+# OrchestraCode
+python3 shared-skills/skills/ux-design/scripts/search.py "compliance SaaS dashboard B2B security professional" --design-system -p "OrchestraCode"
 
 # EstateOS
 python3 shared-skills/skills/ux-design/scripts/search.py "legal SaaS estate planning professional UK trust" --design-system -p "EstateOS"
@@ -392,7 +392,7 @@ This creates/updates:
 
 **With page-specific override:**
 ```bash
-python3 shared-skills/skills/ux-design/scripts/search.py "<query>" --design-system --persist -p "CertPilot" --page "dashboard" --output-dir certpilot-plugin/skills/ux-design
+python3 shared-skills/skills/ux-design/scripts/search.py "<query>" --design-system --persist -p "OrchestraCode" --page "dashboard" --output-dir orchestracode-plugin/skills/ux-design
 ```
 
 ### Step 3: Domain Searches (supplement as needed)

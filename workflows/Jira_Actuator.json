@@ -501,7 +501,7 @@
           "__rl": true,
           "value": "10034",
           "mode": "list",
-          "cachedResultName": "CertPilot-PDM"
+          "cachedResultName": "OrchestraCode-PDM"
         },
         "issueType": {
           "__rl": true,
@@ -521,14 +521,14 @@
         1760
       ],
       "id": "91e66bd9-5e52-4f07-a6bb-9726ac55f2e4",
-      "name": "Create an Idea in CertPilot-PDM (CP)",
+      "name": "Create an Idea in OrchestraCode-PDM (CP)",
       "credentials": {
         "jiraSoftwareCloudApi": {
           "id": "",
           "name": ""
         }
       },
-      "notes": "Use this to create ideas in the certpilot-pdm space"
+      "notes": "Use this to create ideas in the orchestracode-pdm space"
     },
     {
       "parameters": {
@@ -1110,7 +1110,7 @@
         ]
       ]
     },
-    "Create an Idea in CertPilot-PDM (CP)": {
+    "Create an Idea in OrchestraCode-PDM (CP)": {
       "ai_tool": [
         [
           {

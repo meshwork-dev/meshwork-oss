@@ -1,5 +1,5 @@
 ---
-description: Onboard a new application to the CertPilot-AutoDev platform as a multi-product setup
+description: Onboard a new application to the OrchestraCode-AutoDev platform as a multi-product setup
 ---
 
 # Product Onboarding Wizard
@@ -43,7 +43,7 @@ Ask:
 3. **Jira board ID**? (the number in the board URL — used for sprint tracking)
 4. **Confluence space key** for engineering docs? (e.g. `ACM`, `CE`)
 5. Do you have a **separate marketing Confluence space**? If so, what's the key?
-6. **Jira domain**? (e.g. `https://mycompany.atlassian.net`) — press Enter to use the CertPilot default
+6. **Jira domain**? (e.g. `https://mycompany.atlassian.net`) — press Enter to use the OrchestraCode default
 7. Do you want **automatic sprint execution**? (y/n) — The sprint runner picks up "To Do" issues from active sprints and dispatches them to agents automatically every 10 minutes.
    - If yes and boardId was provided: "Maximum issues to dispatch per cycle?" (default 5)
 
@@ -287,7 +287,7 @@ Use the Write tool to create:
 products/<id>/product.json
 ```
 
-(Relative to the CertPilot-AutoDev project root.)
+(Relative to the OrchestraCode-AutoDev project root.)
 
 ### 3. Generate the plugin scaffold
 
@@ -315,14 +315,14 @@ Create the `<id>-plugin/` directory with the following structure:
 - **Advanced** (optional): `ba-agent`, `architect-jets`, `ux-agent`, `qa-agent`, `ask-tom-agent`, `e2e-builder`, `uat-agent`
 - **Documentation** (optional): `user-guide-agent`, `video-renderer` — navigates the live app to produce screenshot-based user guides and tutorial videos
 
-For each selected agent, read the CertPilot version from `certpilot-plugin/agents/<agent>.md` as a reference template. Generate a product-specific version by substituting:
+For each selected agent, read the OrchestraCode version from `orchestracode-plugin/agents/<agent>.md` as a reference template. Generate a product-specific version by substituting:
 
 - Product name, description, positioning (from product.json)
 - Jira project key and board ID
 - Confluence space keys
 - Brand colors, tone, terminology
 - Tech stack, frameworks, dev commands
-- Skill file references (`certpilot-*` → `<id>-*`)
+- Skill file references (`orchestracode-*` → `<id>-*`)
 - CRM workspace and fields
 - UAT paths and regression journeys
 
@@ -330,7 +330,7 @@ Write each generated agent to `<id>-plugin/agents/<agent>.md`.
 
 #### CRITICAL: Domain-Specialist Product Manager
 
-The `product-manager` agent gets **special treatment**. Do NOT just substitute product names into the CertPilot PM template. Instead, use `estateos-plugin/agents/product-manager.md` as the **structural reference** (it's the domain-specialist reference implementation) and generate a PM with:
+The `product-manager` agent gets **special treatment**. Do NOT just substitute product names into the OrchestraCode PM template. Instead, use `estateos-plugin/agents/product-manager.md` as the **structural reference** (it's the domain-specialist reference implementation) and generate a PM with:
 
 1. **Domain expertise header** — "You are a domain-specialist product manager for {Product}. You think, reason, and make decisions as someone with deep expertise in {domain from Step 6a}."
 
@@ -354,7 +354,7 @@ If the user provided minimal domain info in Step 6, generate a PM with placehold
 
 **`company-brief.md`**: Generate from product.json values — company overview, product description, target market, brand voice, tech stack, team structure.
 
-**`.mcp.json`**: Generate based on the integrations the user selected (Jira MCP if Jira enabled, CRM tools if sales enabled). Use `certpilot-plugin/.mcp.json` as a reference template.
+**`.mcp.json`**: Generate based on the integrations the user selected (Jira MCP if Jira enabled, CRM tools if sales enabled). Use `orchestracode-plugin/.mcp.json` as a reference template.
 
 Always add a `memory` entry to the plugin `.mcp.json` using the container path:
 
@@ -371,7 +371,7 @@ Always add a `memory` entry to the plugin `.mcp.json` using the container path:
 
 **`.claude-plugin/plugin.json`**: Plugin descriptor with name and version.
 
-**`hooks/`**: Copy the safety hooks from `certpilot-plugin/hooks/` (these are product-agnostic).
+**`hooks/`**: Copy the safety hooks from `orchestracode-plugin/hooks/` (these are product-agnostic).
 
 **`skills/`** and **`commands/`**: Create empty directories. Tell the user they can add product-specific skills later.
 

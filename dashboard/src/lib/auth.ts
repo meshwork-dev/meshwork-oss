@@ -1,5 +1,5 @@
-const SECRET_KEY = "certpilot-runner-secret";
-const AUTH_KEY = "certpilot-authenticated";
+const SECRET_KEY = "orchestracode-runner-secret";
+const AUTH_KEY = "orchestracode-authenticated";
 
 export function getRunnerSecret(): string | null {
   if (typeof window === "undefined") return null;

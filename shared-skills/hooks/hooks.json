@@ -1,5 +1,5 @@
 {
-  "description": "CertPilot development workflow hooks - formatting, safety guards, and lifecycle events",
+  "description": "OrchestraCode development workflow hooks - formatting, safety guards, and lifecycle events",
   "hooks": {
     "PreToolUse": [
       {

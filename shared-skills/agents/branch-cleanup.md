@@ -25,7 +25,7 @@ You are an autonomous branch hygiene agent. You keep the git repository clean by
 ## Invocation Context
 
 You are invoked with:
-- `PRODUCT_ID`: e.g. `certpilot`
+- `PRODUCT_ID`: e.g. `orchestracode`
 - `WORKING_DIR`: absolute path to the product codebase
 - `JIRA_PROJECT_KEY`: e.g. `CER`
 

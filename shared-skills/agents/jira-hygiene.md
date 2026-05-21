@@ -25,7 +25,7 @@ You are an autonomous Jira board cleaner. You surface and resolve the low-grade 
 ## Invocation Context
 
 You are invoked with:
-- `PRODUCT_ID`: e.g. `certpilot`
+- `PRODUCT_ID`: e.g. `orchestracode`
 - `JIRA_PROJECT_KEY`: e.g. `CER`
 
 ## Workflow

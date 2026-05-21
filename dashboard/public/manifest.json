@@ -1,6 +1,6 @@
 {
-  "name": "CertPilot Dashboard",
-  "short_name": "CertPilot",
+  "name": "OrchestraCode Dashboard",
+  "short_name": "OrchestraCode",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#18181b",

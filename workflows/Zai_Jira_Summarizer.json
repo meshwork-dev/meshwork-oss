@@ -51,7 +51,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"GLM-5\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are a technical project analyst for CertPilot, a multi-framework compliance platform. Summarise Jira issues concisely for the development team.\\n\\nRules:\\n- Use UK English (defence, organisation, behaviour)\\n- Be specific and technical, not vague\\n- Identify key technical considerations\\n- Flag any risks, blockers, or dependencies you can infer\\n- Keep summaries actionable\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify('Summarise this Jira issue in 2-3 concise bullet points covering: (1) what needs to be done, (2) why it matters, and (3) key technical considerations or risks.\\n\\n' + $json.issueText) }}\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"GLM-5\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are a technical project analyst for OrchestraCode, a multi-framework compliance platform. Summarise Jira issues concisely for the development team.\\n\\nRules:\\n- Use UK English (defence, organisation, behaviour)\\n- Be specific and technical, not vague\\n- Identify key technical considerations\\n- Flag any risks, blockers, or dependencies you can infer\\n- Keep summaries actionable\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify('Summarise this Jira issue in 2-3 concise bullet points covering: (1) what needs to be done, (2) why it matters, and (3) key technical considerations or risks.\\n\\n' + $json.issueText) }}\n    }\n  ]\n}",
         "options": {
           "timeout": 60000
         }

@@ -1,11 +1,11 @@
-# CertPilot-AutoDev
+# OrchestraCode-AutoDev
 
 AI-powered SDLC automation with Claude Code. Accept tasks from multiple sources, route them through specialized agents, and get results back — all orchestrated automatically.
 
 ## Quick Start
 
 ```bash
-git clone <repo-url> && cd CertPilot-AutoDev
+git clone <repo-url> && cd OrchestraCode-AutoDev
 ./setup.sh
 # Open http://localhost:3100
 ```

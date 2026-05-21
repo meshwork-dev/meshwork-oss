@@ -231,7 +231,7 @@ async function handleMessage(msg) {
       result: {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "certpilot-issues", version: "1.0.0" },
+        serverInfo: { name: "orchestracode-issues", version: "1.0.0" },
       },
     });
   }

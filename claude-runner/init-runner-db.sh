@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# CertPilot Runner Database Initialization
+# OrchestraCode Runner Database Initialization
 # Mounted at /docker-entrypoint-initdb.d/02-init-runner-db.sh
 # Runs as postgres superuser during first container startup
 

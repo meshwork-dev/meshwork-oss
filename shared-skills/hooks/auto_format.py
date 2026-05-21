@@ -50,7 +50,7 @@ def main():
         print(json.dumps({}))
 
     except Exception as e:
-        print(json.dumps({"systemMessage": f"CertPilot auto_format warning: {e}"}))
+        print(json.dumps({"systemMessage": f"OrchestraCode auto_format warning: {e}"}))
 
     sys.exit(0)
 

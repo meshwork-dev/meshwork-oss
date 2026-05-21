@@ -3,7 +3,7 @@
 
 ## Attio CRM Integration
 
-Sales agents use the **Attio MCP server** (stdio-based, `attio-mcp` npm package) for full CRM access. Configured in `certpilot-plugin/.mcp.json`.
+Sales agents use the **Attio MCP server** (stdio-based, `attio-mcp` npm package) for full CRM access. Configured in `orchestracode-plugin/.mcp.json`.
 
 **Environment**: Set `ATTIO_API_KEY` in `.env` file.
 
@@ -156,7 +156,7 @@ Issues with `[UI]` prefix in summary or `needs-ui-work` label are automatically 
 ### ui-engineer Agent
 - Runs on Claude (Sonnet 4.6) as part of the planner's Agent Team
 - Implements frontend UI with brand guidelines
-- Reads `skills/certpilot-brand/SKILL.md` before any work
+- Reads `skills/orchestracode-brand/SKILL.md` before any work
 - Uses brand colours: Deep Teal #0D9488, Success #10B981, Warning #F59E0B, Error #EF4444
 - Runs quality gate (type-check, lint, build)
 - Comment prefix: `[AUTO-UI-IMPLEMENT]`
@@ -200,7 +200,7 @@ Issues with `[UI]` prefix in summary or `needs-ui-work` label are automatically 
   agent: ui
   description: |
     Create React components for dashboard.
-    Follow CertPilot brand guidelines.
+    Follow OrchestraCode brand guidelines.
   files: [src/components/Dashboard/]
 [/CREATE-SUBTASKS]
 ```

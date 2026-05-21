@@ -39,12 +39,12 @@ def main():
         # Block everything else
         result = {
             "decision": "block",
-            "reason": f"CertPilot safety hook: Write blocked - '{file_path}' is outside project directory '{project_dir}'"
+            "reason": f"OrchestraCode safety hook: Write blocked - '{file_path}' is outside project directory '{project_dir}'"
         }
         print(json.dumps(result))
 
     except Exception as e:
-        print(json.dumps({"systemMessage": f"CertPilot guard_paths warning: {e}"}))
+        print(json.dumps({"systemMessage": f"OrchestraCode guard_paths warning: {e}"}))
 
     sys.exit(0)
 

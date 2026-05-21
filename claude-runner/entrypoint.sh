@@ -12,7 +12,7 @@ if [ -n "${GITHUB_TOKEN}" ]; then
   git config --global credential.helper ""
   # Required when committing inside worktrees.
   git config --global user.email "${GIT_AUTHOR_EMAIL:-runner@local.invalid}"
-  git config --global user.name "${GIT_AUTHOR_NAME:-CertPilot Runner}"
+  git config --global user.name "${GIT_AUTHOR_NAME:-OrchestraCode Runner}"
   # Trust mounted worktree paths owned by other UIDs.
   git config --global --add safe.directory '*'
 fi

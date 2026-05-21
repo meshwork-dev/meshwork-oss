@@ -33,7 +33,7 @@ def main():
             if re.search(pattern, command, re.IGNORECASE):
                 result = {
                     "decision": "block",
-                    "reason": f"CertPilot safety hook: Blocked potentially dangerous command matching pattern '{pattern}'"
+                    "reason": f"OrchestraCode safety hook: Blocked potentially dangerous command matching pattern '{pattern}'"
                 }
                 print(json.dumps(result))
                 sys.exit(0)
@@ -43,7 +43,7 @@ def main():
 
     except Exception as e:
         # On error, allow the operation - don't block work due to hook failure
-        print(json.dumps({"systemMessage": f"CertPilot guard_bash warning: {e}"}))
+        print(json.dumps({"systemMessage": f"OrchestraCode guard_bash warning: {e}"}))
 
     sys.exit(0)
 
