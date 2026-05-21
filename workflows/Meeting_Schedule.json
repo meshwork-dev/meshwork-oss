@@ -1,0 +1,260 @@
+{
+  "name": "Meeting Schedule - Autonomous Reconvening",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtMinute": 15,
+              "triggerAtHour": 9,
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ]
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "ms-schedule-standup",
+      "name": "Daily Standup (9:15 Weekdays)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtMinute": 0,
+              "triggerAtHour": 10,
+              "triggerAtDay": [
+                1
+              ]
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "id": "ms-schedule-weekly",
+      "name": "Weekly Planning (Mon 10:00)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Daily standup meeting config\nconst today = new Date();\nconst dateStr = today.toISOString().split('T')[0];\n\nreturn [{ json: {\n  topic: `Daily standup ${dateStr}: What did we accomplish? What are we working on today? Any blockers?`,\n  agents: ['product-manager', 'engineer-planner', 'engineer-implementer', 'qa-agent'],\n  maxRounds: 2,\n  autoDiscuss: true,\n  meetingType: 'standup',\n  telegramChat: 'engineering',\n  idempotencyKey: `meeting-standup:${dateStr}`\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "ms-standup-config",
+      "name": "Standup Config"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Weekly planning meeting config\nconst today = new Date();\nconst weekNum = Math.ceil(((today - new Date(today.getFullYear(), 0, 1)) / 86400000 + new Date(today.getFullYear(), 0, 1).getDay() + 1) / 7);\nconst dateStr = today.toISOString().split('T')[0];\n\nreturn [{ json: {\n  topic: `Weekly planning (W${weekNum}): Review sprint progress, prioritize upcoming work, identify risks and dependencies. Plan the week ahead.`,\n  agents: ['product-manager', 'engineer-planner', 'architect-jets', 'engineer-implementer', 'engineer-reviewer', 'security-agent', 'qa-agent'],\n  maxRounds: 3,\n  autoDiscuss: true,\n  meetingType: 'weekly-planning',\n  telegramChat: 'engineering',\n  idempotencyKey: `meeting-weekly:${dateStr}`\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "id": "ms-weekly-config",
+      "name": "Weekly Config"
+    },
+    {
+      "parameters": {
+        "url": "=http://runner:3210/meeting",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ topic: $json.topic, agents: $json.agents, mode: 'chair', chair: $json.agents[0], maxRounds: $json.maxRounds, autoDiscuss: $json.autoDiscuss, callbackUrl: '{{N8N_PUBLIC_URL}}/webhook/meeting/callback', telegram: { chatId: $json.telegramChat === 'engineering' ? '-5037701631' : '-5292536301' } }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-runner-secret",
+              "value": "={{ $env.RUNNER_SECRET }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "ms-trigger-standup",
+      "name": "Trigger Standup Meeting"
+    },
+    {
+      "parameters": {
+        "url": "=http://runner:3210/meeting",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ topic: $json.topic, agents: $json.agents, mode: 'chair', chair: $json.agents[0], maxRounds: $json.maxRounds, autoDiscuss: $json.autoDiscuss, callbackUrl: '{{N8N_PUBLIC_URL}}/webhook/meeting/callback', telegram: { chatId: '-5037701631' } }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-runner-secret",
+              "value": "={{ $env.RUNNER_SECRET }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "id": "ms-trigger-weekly",
+      "name": "Trigger Weekly Meeting"
+    },
+    {
+      "parameters": {
+        "chatId": "-5037701631",
+        "text": "={{ `*Scheduled Meeting Starting*\\n\\nType: ${$('Standup Config').item.json.meetingType}\\nTopic: ${$('Standup Config').item.json.topic.substring(0, 100)}\\nAgents: ${$('Standup Config').item.json.agents.length}\\n\\n_You'll receive the discussion and outcomes shortly._` }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "ms-notify-standup",
+      "name": "Notify Standup Start",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "-5037701631",
+        "text": "={{ `*Scheduled Meeting Starting*\\n\\nType: ${$('Weekly Config').item.json.meetingType}\\nTopic: ${$('Weekly Config').item.json.topic.substring(0, 100)}\\nAgents: ${$('Weekly Config').item.json.agents.length}\\n\\n_Full team discussion. You'll receive the discussion and outcomes shortly._` }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        300
+      ],
+      "id": "ms-notify-weekly",
+      "name": "Notify Weekly Start",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Daily Standup (9:15 Weekdays)": {
+      "main": [
+        [
+          {
+            "node": "Standup Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Planning (Mon 10:00)": {
+      "main": [
+        [
+          {
+            "node": "Weekly Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Standup Config": {
+      "main": [
+        [
+          {
+            "node": "Trigger Standup Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Config": {
+      "main": [
+        [
+          {
+            "node": "Trigger Weekly Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Standup Meeting": {
+      "main": [
+        [
+          {
+            "node": "Notify Standup Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Weekly Meeting": {
+      "main": [
+        [
+          {
+            "node": "Notify Weekly Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

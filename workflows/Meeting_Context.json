@@ -1,0 +1,203 @@
+{
+  "name": "Meeting Context - Jira & Confluence Loader",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meeting/context",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "mctx-webhook",
+      "name": "Meeting Context Webhook",
+      "webhookId": ""
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json;\nconst topic = body.topic || '';\nconst jiraProject = body.jiraProject || 'CER';\nconst issuePattern = new RegExp(`${jiraProject}-(\\\\d+)`, 'gi');\nconst mentionedIssues = [...new Set((topic.match(issuePattern) || []).map(k => k.toUpperCase()))];\n\nreturn [{ json: {\n  mentionedIssues,\n  jiraProject,\n  confluenceSpace: body.confluenceSpace || 'CE',\n  confluenceParentPage: body.confluenceParentPage || 'Meetings',\n  topic,\n  sprintJql: `project = ${jiraProject} AND sprint in openSprints() AND status != Done ORDER BY priority DESC`,\n  resolvedJql: `project = ${jiraProject} AND status changed to Done AFTER -7d ORDER BY updated DESC`\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "mctx-parse",
+      "name": "Build Queries"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{JIRA_HOST}}/rest/api/3/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "={{ $json.sprintJql }}"
+            },
+            {
+              "name": "maxResults",
+              "value": "30"
+            },
+            {
+              "name": "fields",
+              "value": "summary,status,priority,assignee,labels,updated"
+            }
+          ]
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "mctx-jira-sprint",
+      "name": "Jira Active Sprint",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{JIRA_HOST}}/rest/api/3/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "={{ $('Build Queries').item.json.resolvedJql }}"
+            },
+            {
+              "name": "maxResults",
+              "value": "15"
+            },
+            {
+              "name": "fields",
+              "value": "summary,status,priority,updated,resolutiondate"
+            }
+          ]
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "mctx-jira-resolved",
+      "name": "Jira Recently Resolved",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge sprint + resolved data with Build Queries context\nconst queries = $('Build Queries').first()?.json || {};\nconst sprintData = $('Jira Active Sprint').first()?.json || {};\nconst resolvedData = $json || {};\n\nlet context = '';\n\n// === JIRA ACTIVE SPRINT ===\ncontext += '## Current Jira Sprint Issues\\n';\nconst sprintIssues = sprintData.issues || [];\nif (sprintIssues.length > 0) {\n  for (const issue of sprintIssues) {\n    const f = issue.fields || {};\n    const status = f.status?.name || 'Unknown';\n    const priority = f.priority?.name || 'Medium';\n    const assignee = f.assignee?.displayName || 'Unassigned';\n    const labels = (f.labels || []).join(', ');\n    context += `- **${issue.key}**: ${f.summary || 'No summary'} | Status: ${status} | Priority: ${priority} | Assignee: ${assignee}${labels ? ` | Labels: ${labels}` : ''}\\n`;\n  }\n} else {\n  context += '_No active sprint issues found._\\n';\n}\n\n// === RECENTLY RESOLVED ===\ncontext += '\\n## Recently Resolved (last 7 days)\\n';\nconst resolvedIssues = resolvedData.issues || [];\nif (resolvedIssues.length > 0) {\n  for (const issue of resolvedIssues) {\n    const f = issue.fields || {};\n    context += `- **${issue.key}**: ${f.summary || 'No summary'} | Status: DONE | Resolved: ${f.resolutiondate ? new Date(f.resolutiondate).toLocaleDateString() : 'recently'}\\n`;\n  }\n} else {\n  context += '_No recently resolved issues._\\n';\n}\n\n// === MENTIONED ISSUES ===\nif (queries.mentionedIssues?.length > 0) {\n  context += `\\n## Issues Mentioned in Topic\\n`;\n  context += `The following issues were explicitly mentioned: ${queries.mentionedIssues.join(', ')}\\n`;\n  context += `Check the Active Sprint and Recently Resolved sections above for their CURRENT status.\\n`;\n  context += `If an issue appears in Recently Resolved, it is DONE — do not discuss it as open.\\n`;\n}\n\nreturn [{ json: { context } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "mctx-merge",
+      "name": "Merge Context"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ context: $json.context }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        0
+      ],
+      "id": "mctx-respond",
+      "name": "Respond"
+    }
+  ],
+  "connections": {
+    "Meeting Context Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Queries": {
+      "main": [
+        [
+          {
+            "node": "Jira Active Sprint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira Active Sprint": {
+      "main": [
+        [
+          {
+            "node": "Jira Recently Resolved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira Recently Resolved": {
+      "main": [
+        [
+          {
+            "node": "Merge Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Context": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

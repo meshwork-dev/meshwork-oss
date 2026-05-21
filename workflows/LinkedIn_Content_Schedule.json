@@ -1,0 +1,137 @@
+{
+  "name": "LinkedIn Content Schedule - 3x Weekly",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1,3,5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "linkedin-content-001",
+      "name": "Mon/Wed/Fri 07:00 UTC"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine which posting day and post type rotation\nconst now = new Date();\nconst dateStr = now.toISOString().split('T')[0];\n\n// Day name for context\nconst dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];\nconst dayName = dayNames[now.getDay()];\n\n// Post type rotation: Mon=insight, Wed=educational, Fri=engagement\n// (cycles through the three types across posting days)\nconst postTypeByDay = {\n  monday: 'insight',\n  wednesday: 'educational',\n  friday: 'engagement'\n};\nconst todayPostType = postTypeByDay[dayName] || 'insight';\n\n// Idempotency key prevents duplicate runs on same day\nconst idempotencyKey = `linkedin-post:${dateStr}`;\n\nconst prompt = `Generate LinkedIn post drafts for today's posting slot.\n\n**Action**: linkedin-post\n**Posting Day**: ${dayName.charAt(0).toUpperCase() + dayName.slice(1)}, ${dateStr}\n**Primary Post Type**: ${todayPostType}\n\n**Instructions**:\n1. Read config.json at salesMarketing.linkedin for postTypes config, commentStyle brandVoice, and confluenceQueue paths\n2. Read skills/certpilot-brand/SKILL.md and skills/certpilot-social/SKILL.md for brand voice\n3. Search Confluence MKTG space for LI-POST pages created in the last 14 days to check what has been posted recently and avoid repeating topics\n4. Generate 3 post options — one insight, one educational, one engagement — optimised for the UK defence/compliance audience\n5. The PRIMARY post type today is \"${todayPostType}\" — lead with that option as Option 1\n6. Store all 3 options in a Confluence page at MKTG/Social Media/LinkedIn Queue/Post Drafts\n7. Page title: \"LI-POST - ${dateStr} - 3 Options\"\n8. Apply labels: content-draft, linkedin-post\n9. Each post must be 150-250 words, include 3-5 relevant hashtags, and follow the brand voice rules\n\nThe workflow will notify #marketing when the drafts are ready — you do NOT need to send a message.`;\n\nreturn [{\n  json: {\n    dateStr,\n    dayName,\n    todayPostType,\n    idempotencyKey,\n    prompt\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "linkedin-content-002",
+      "name": "Prepare Post Generation Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/agent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"marketing\",\n  \"model\": \"sonnet\",\n  \"prompt\": {{ JSON.stringify($json.prompt) }},\n  \"source\": {\n    \"workflow\": \"LinkedIn_Content_Schedule\",\n    \"triggeredBy\": \"schedule:linkedin-content\",\n    \"postingDay\": {{ JSON.stringify($json.dayName) }},\n    \"postType\": {{ JSON.stringify($json.todayPostType) }}\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "linkedin-content-003",
+      "name": "Dispatch Marketing Agent",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_MARKETING }}",
+        "text": "*LinkedIn Post Drafts Generating*\n\nPosting day: {{ $('Prepare Post Generation Request').item.json.dayName }} ({{ $('Prepare Post Generation Request').item.json.dateStr }})\nPrimary post type: {{ $('Prepare Post Generation Request').item.json.todayPostType }}\n\nThe marketing agent is generating 3 post options in Confluence. Review and copy to LinkedIn by 09:00 today.\n\n_Confluence: MKTG > Social Media > LinkedIn Queue > Post Drafts_",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "linkedin-content-004",
+      "name": "Notify Marketing Space",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Mon/Wed/Fri 07:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Prepare Post Generation Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Post Generation Request": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Marketing Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Marketing Agent": {
+      "main": [
+        [
+          {
+            "node": "Notify Marketing Space",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

@@ -1,0 +1,147 @@
+{
+  "name": "Bug Triage Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jira/bug-created",
+        "authentication": "headerAuth",
+        "options": {
+          "responseData": "={ \"ok\": true }"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "bug-webhook-001",
+      "name": "Bug Created Webhook",
+      "webhookId": "",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate webhook payload and extract bug info\nconst body = $json.body || $json;\nconst issue = body.issue || {};\nconst webhookEvent = body.webhookEvent || '';\n\n// Only process issue_created events\nif (!webhookEvent.includes('issue_created')) {\n  return [{ json: { skip: true, reason: 'Not a creation event' } }];\n}\n\n// Only process Bug issue types\nconst issueType = issue.fields?.issuetype?.name || '';\nif (issueType.toLowerCase() !== 'bug') {\n  return [{ json: { skip: true, reason: 'Not a bug issue type' } }];\n}\n\nconst issueKey = issue.key;\nconst summary = issue.fields?.summary || '';\nconst description = issue.fields?.description || '';\n\n// Project key → working directory map (must match Jira_Webhook_Listener)\nconst PROJECT_DIRS = {\n  CER: '{{DEFAULT_WORKING_DIR}}',\n  EOS: '{{DEFAULT_WORKING_DIR}}',\n  WMS: '{{DEFAULT_WORKING_DIR}}'\n};\nconst DEFAULT_DIR = '{{DEFAULT_WORKING_DIR}}';\nconst projectKey = issueKey ? issueKey.split('-')[0] : '';\nconst workingDir = PROJECT_DIRS[projectKey] || DEFAULT_DIR;\n\n// Generate idempotency key\nconst idempotencyKey = `bug-triage:${issueKey}:${Date.now()}`;\n\nreturn [{\n  json: {\n    skip: false,\n    issueKey,\n    summary,\n    description,\n    issueType,\n    idempotencyKey,\n    workingDir\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "bug-webhook-003",
+      "name": "Validate & Extract"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ !$json.skip }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        0
+      ],
+      "id": "bug-webhook-004",
+      "name": "Should Process?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"bug-triage\",\n  \"issueKey\": \"{{ $json.issueKey }}\",\n  \"summary\": {{ JSON.stringify($json.summary) }},\n  \"description\": {{ JSON.stringify($json.description) }},\n  \"workingDir\": {{ JSON.stringify($json.workingDir) }},\n  \"callbackUrl\": \"{{N8N_PUBLIC_URL}}/webhook/runner/callback\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        -96
+      ],
+      "id": "bug-webhook-005",
+      "name": "Dispatch Bug Triage",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Bug Created Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate & Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Extract": {
+      "main": [
+        [
+          {
+            "node": "Should Process?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Process?": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Bug Triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -1,0 +1,336 @@
+{
+  "name": "Z.ai LinkedIn RSS Monitor - Twice Daily",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8,14 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "zai-linkedin-monitor-001",
+      "name": "Weekdays 08:00 and 14:00 UTC"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine AM or PM session and build idempotency key\nconst now = new Date();\nconst hour = now.getUTCHours();\nconst session = hour < 12 ? 'am' : 'pm';\nconst dateStr = now.toISOString().split('T')[0];\nconst idempotencyKey = `linkedin-monitor:${dateStr}:${session}`;\n\nreturn [{\n  json: {\n    dateStr,\n    session,\n    hour,\n    idempotencyKey\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "zai-linkedin-monitor-002",
+      "name": "Prepare Session Info"
+    },
+    {
+      "parameters": {
+        "url": "https://iasme.co.uk/feed/",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        440,
+        -200
+      ],
+      "id": "zai-linkedin-monitor-003a",
+      "name": "RSS: IASME"
+    },
+    {
+      "parameters": {
+        "url": "https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        440,
+        -100
+      ],
+      "id": "zai-linkedin-monitor-003b",
+      "name": "RSS: NCSC"
+    },
+    {
+      "parameters": {
+        "url": "https://ico.org.uk/about-the-ico/media-centre/news-and-blogs/rss/",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ],
+      "id": "zai-linkedin-monitor-003c",
+      "name": "RSS: ICO"
+    },
+    {
+      "parameters": {
+        "url": "https://www.gov.uk/government/organisations/defence-equipment-and-support.atom",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        440,
+        100
+      ],
+      "id": "zai-linkedin-monitor-003d",
+      "name": "RSS: Def Stan"
+    },
+    {
+      "parameters": {
+        "url": "https://www.adsgroup.org.uk/feed/",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        440,
+        200
+      ],
+      "id": "zai-linkedin-monitor-003e",
+      "name": "RSS: ADS Group"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge and filter RSS items from all 5 feeds (last 24 hours)\nconst now = new Date();\nconst twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);\n\nconst feedSources = [\n  { name: 'IASME', topics: 'Cyber Essentials, CE Plus, IASME Governance' },\n  { name: 'NCSC', topics: 'Cyber threats, guidance, supply chain, SME security' },\n  { name: 'ICO', topics: 'Data protection, GDPR, enforcement, SME guidance' },\n  { name: 'Def Stan', topics: 'Defence standards, Def Stan 05-138, procurement' },\n  { name: 'ADS Group', topics: 'Aerospace, defence, security industry' }\n];\n\n// Collect all items from all input branches\nconst allItems = [];\nfor (let branchIdx = 0; branchIdx < 5; branchIdx++) {\n  const sourceName = feedSources[branchIdx].name;\n  const sourceTopics = feedSources[branchIdx].topics;\n  try {\n    const branchItems = $input.all(branchIdx) || [];\n    for (const item of branchItems) {\n      const pubDate = item.json.pubDate ? new Date(item.json.pubDate) : \n                      item.json.isoDate ? new Date(item.json.isoDate) :\n                      item.json.date ? new Date(item.json.date) : null;\n      \n      if (pubDate && pubDate >= twentyFourHoursAgo) {\n        const ageHours = (now.getTime() - pubDate.getTime()) / (1000 * 60 * 60);\n        const urgency = ageHours < 2 ? 'High' : ageHours < 6 ? 'Medium' : 'Low';\n        \n        allItems.push({\n          source: sourceName,\n          topics: sourceTopics,\n          title: item.json.title || 'Untitled',\n          link: item.json.link || item.json.url || '',\n          description: (item.json.contentSnippet || item.json.description || item.json.summary || '').substring(0, 500),\n          pubDate: pubDate.toISOString(),\n          ageHours: Math.round(ageHours * 10) / 10,\n          urgency\n        });\n      }\n    }\n  } catch (e) {\n    // Feed may have failed or returned no items — skip gracefully\n  }\n}\n\n// Sort by urgency (High first), then by age\nallItems.sort((a, b) => {\n  const urgencyOrder = { High: 0, Medium: 1, Low: 2 };\n  return (urgencyOrder[a.urgency] - urgencyOrder[b.urgency]) || (a.ageHours - b.ageHours);\n});\n\nreturn [{\n  json: {\n    itemCount: allItems.length,\n    items: allItems,\n    feedSummary: allItems.length > 0\n      ? allItems.map((item, i) => `${i + 1}. [${item.urgency}] ${item.source}: \"${item.title}\"\\n   URL: ${item.link}\\n   Published: ${item.pubDate} (${item.ageHours}h ago)\\n   Summary: ${item.description.substring(0, 200)}`).join('\\n\\n')\n      : 'No new items found in the last 24 hours across all feeds.'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "zai-linkedin-monitor-004",
+      "name": "Filter Last 24h Items"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.z.ai/api/anthropic/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"GLM-5\",\n  \"max_tokens\": 4096,\n  \"system\": \"You are a LinkedIn engagement strategist for CertPilot, a multi-framework compliance platform for UK SMEs in the defence supply chain.\\n\\n## Comment Drafting Rules\\n- Under 300 characters for punchy visibility; 500-1000 characters for thought leadership pieces\\n- ALWAYS end with a question or invitation to discuss\\n- Reflect practitioner experience, NOT vendor marketing\\n- NEVER open with: \\\"Great post!\\\", \\\"Interesting!\\\", \\\"Thanks for sharing!\\\", \\\"Couldn't agree more!\\\"\\n- Use UK spelling (defence, organisation, behaviour)\\n- Reference specific regulations, standards, or deadlines where relevant\\n- CertPilot context: 410+ controls mapped, 70% evidence reuse, Def Stan 05-138, ISO 27001, SOC 2, IASME, Cyber Essentials, DCC L0-L3\\n- DEFCON 658 makes DCC mandatory for MOD suppliers\\n- Tone: knowledgeable peer, not sales pitch\\n\\n## Urgency Tags\\n- High (< 2 hours old): Prioritise these — first-mover advantage on comments\\n- Medium (2-6 hours): Still valuable engagement window\\n- Low (> 6 hours): Only if the content is exceptionally relevant\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify('Draft LinkedIn comments for these new items from authority accounts.\\n\\nDate: ' + $('Prepare Session Info').item.json.dateStr + '\\nSession: ' + $('Prepare Session Info').item.json.session.toUpperCase() + '\\nItems found: ' + $json.itemCount + '\\n\\n' + ($json.itemCount > 0 ? 'ITEMS TO COMMENT ON:\\n\\n' + $json.feedSummary + '\\n\\nFor each item, provide:\\n1. **Source** and **Title**\\n2. **Urgency** tag (High/Medium/Low)\\n3. **Comment draft** (under 300 chars, or 500-1000 for thought leadership)\\n4. **Rationale** - why this comment adds value\\n\\nOrder by urgency (High first). If an item is not relevant to CertPilot\\'s audience, skip it with a brief note why.' : 'No new items found in the last 24 hours. Respond with a brief summary noting zero items found and suggest checking back next session.')) }}\n    }\n  ]\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        0
+      ],
+      "id": "zai-linkedin-monitor-005",
+      "name": "Call GLM-5 for Comments",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse GLM-5 response and format notification\nconst response = $input.item.json;\nconst session = $('Prepare Session Info').item.json.session;\nconst dateStr = $('Prepare Session Info').item.json.dateStr;\nconst itemCount = $('Filter Last 24h Items').item.json.itemCount;\n\n// Extract text from Anthropic Messages API response\nlet commentContent = '';\nif (response.content && Array.isArray(response.content)) {\n  commentContent = response.content\n    .filter(block => block.type === 'text')\n    .map(block => block.text)\n    .join('\\n');\n} else if (typeof response === 'string') {\n  commentContent = response;\n}\n\nconst inputTokens = response.usage?.input_tokens || 0;\nconst outputTokens = response.usage?.output_tokens || 0;\n\nconst notificationText = `*LinkedIn RSS Monitor Complete* (${session.toUpperCase()}, ${dateStr})\\n\\nFeeds checked: IASME, NCSC, ICO, Def Stan, ADS Group\\nNew items found: ${itemCount}\\nTokens: ${inputTokens} in / ${outputTokens} out\\n\\n${commentContent.substring(0, 3000)}${commentContent.length > 3000 ? '\\n\\n_[Truncated]_' : ''}`;\n\nreturn [{\n  json: {\n    dateStr,\n    session,\n    itemCount,\n    commentContent,\n    inputTokens,\n    outputTokens,\n    notificationText\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "id": "zai-linkedin-monitor-006",
+      "name": "Parse Comment Drafts"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_MARKETING }}",
+        "text": "={{ $json.notificationText }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        0
+      ],
+      "id": "zai-linkedin-monitor-007",
+      "name": "Post to Google Chat",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekdays 08:00 and 14:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Prepare Session Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Session Info": {
+      "main": [
+        [
+          {
+            "node": "RSS: IASME",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS: NCSC",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS: ICO",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS: Def Stan",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS: ADS Group",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS: IASME": {
+      "main": [
+        [
+          {
+            "node": "Filter Last 24h Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS: NCSC": {
+      "main": [
+        [
+          {
+            "node": "Filter Last 24h Items",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "RSS: ICO": {
+      "main": [
+        [
+          {
+            "node": "Filter Last 24h Items",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "RSS: Def Stan": {
+      "main": [
+        [
+          {
+            "node": "Filter Last 24h Items",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "RSS: ADS Group": {
+      "main": [
+        [
+          {
+            "node": "Filter Last 24h Items",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Filter Last 24h Items": {
+      "main": [
+        [
+          {
+            "node": "Call GLM-5 for Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call GLM-5 for Comments": {
+      "main": [
+        [
+          {
+            "node": "Parse Comment Drafts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Comment Drafts": {
+      "main": [
+        [
+          {
+            "node": "Post to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

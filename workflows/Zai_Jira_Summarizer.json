@@ -1,0 +1,163 @@
+{
+  "name": "Z.ai Jira Issue Summarizer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "zai-jira-summarize",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "zai-jira-summary-001",
+      "name": "Jira Webhook",
+      "webhookId": ""
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract Jira issue data from webhook payload\nconst body = $json.body || $json;\nconst issue = body.issue || {};\nconst fields = issue.fields || {};\n\nconst issueKey = issue.key || body.issueKey || 'UNKNOWN';\nconst summary = fields.summary || body.summary || 'No summary';\nconst description = fields.description || body.description || 'No description provided';\nconst issueType = fields.issuetype?.name || body.issueType || 'Unknown';\nconst priority = fields.priority?.name || body.priority || 'None';\nconst status = fields.status?.name || body.status || 'Unknown';\nconst assignee = fields.assignee?.displayName || body.assignee || 'Unassigned';\nconst reporter = fields.reporter?.displayName || body.reporter || 'Unknown';\nconst labels = (fields.labels || body.labels || []).join(', ') || 'None';\nconst components = (fields.components || []).map(c => c.name).join(', ') || 'None';\n\n// Extract comments if available\nconst comments = (fields.comment?.comments || body.comments || [])\n  .slice(-5) // Last 5 comments\n  .map(c => `[${c.author?.displayName || 'Unknown'}]: ${(c.body || '').substring(0, 300)}`)\n  .join('\\n');\n\nconst eventType = body.webhookEvent || body.eventType || 'issue_updated';\n\n// Build the issue text for summarisation\nconst issueText = `Issue: ${issueKey}\nType: ${issueType}\nPriority: ${priority}\nStatus: ${status}\nAssignee: ${assignee}\nReporter: ${reporter}\nLabels: ${labels}\nComponents: ${components}\n\nSummary: ${summary}\n\nDescription:\n${typeof description === 'string' ? description.substring(0, 2000) : JSON.stringify(description).substring(0, 2000)}\n\n${comments ? 'Recent Comments:\\n' + comments : 'No comments.'}`;\n\nreturn [{\n  json: {\n    issueKey,\n    summary,\n    issueType,\n    priority,\n    status,\n    eventType,\n    issueText\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "zai-jira-summary-002",
+      "name": "Extract Issue Data"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.z.ai/api/anthropic/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"GLM-5\",\n  \"max_tokens\": 1024,\n  \"system\": \"You are a technical project analyst for CertPilot, a multi-framework compliance platform. Summarise Jira issues concisely for the development team.\\n\\nRules:\\n- Use UK English (defence, organisation, behaviour)\\n- Be specific and technical, not vague\\n- Identify key technical considerations\\n- Flag any risks, blockers, or dependencies you can infer\\n- Keep summaries actionable\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify('Summarise this Jira issue in 2-3 concise bullet points covering: (1) what needs to be done, (2) why it matters, and (3) key technical considerations or risks.\\n\\n' + $json.issueText) }}\n    }\n  ]\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "zai-jira-summary-003",
+      "name": "Call GLM-5 for Summary",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse GLM-5 response and format notification\nconst response = $input.item.json;\nconst issueKey = $('Extract Issue Data').item.json.issueKey;\nconst summary = $('Extract Issue Data').item.json.summary;\nconst issueType = $('Extract Issue Data').item.json.issueType;\nconst priority = $('Extract Issue Data').item.json.priority;\nconst status = $('Extract Issue Data').item.json.status;\nconst eventType = $('Extract Issue Data').item.json.eventType;\n\nlet aiSummary = '';\nif (response.content && Array.isArray(response.content)) {\n  aiSummary = response.content\n    .filter(block => block.type === 'text')\n    .map(block => block.text)\n    .join('\\n');\n} else if (typeof response === 'string') {\n  aiSummary = response;\n}\n\nconst inputTokens = response.usage?.input_tokens || 0;\nconst outputTokens = response.usage?.output_tokens || 0;\n\n// Determine emoji-free priority indicator\nconst priorityIndicator = {\n  'Highest': '[!!!]',\n  'High': '[!!]',\n  'Medium': '[!]',\n  'Low': '[-]',\n  'Lowest': '[.]'\n};\n\nconst notificationText = `*${issueKey}: ${summary}*\\nType: ${issueType} | Priority: ${priority} ${priorityIndicator[priority] || ''} | Status: ${status}\\nEvent: ${eventType}\\n\\n*AI Summary:*\\n${aiSummary}\\n\\n_Jira: https://{{JIRA_HOST}}/browse/${issueKey} | Tokens: ${inputTokens}/${outputTokens}_`;\n\nreturn [{\n  json: {\n    issueKey,\n    summary,\n    aiSummary,\n    inputTokens,\n    outputTokens,\n    notificationText\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "zai-jira-summary-004",
+      "name": "Format Summary"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_MARKETING }}",
+        "text": "={{ $json.notificationText }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "zai-jira-summary-005",
+      "name": "Post to Google Chat",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Jira Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Issue Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Issue Data": {
+      "main": [
+        [
+          {
+            "node": "Call GLM-5 for Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call GLM-5 for Summary": {
+      "main": [
+        [
+          {
+            "node": "Format Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Summary": {
+      "main": [
+        [
+          {
+            "node": "Post to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

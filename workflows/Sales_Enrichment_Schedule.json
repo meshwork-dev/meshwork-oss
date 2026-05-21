@@ -1,0 +1,137 @@
+{
+  "name": "Sales Enrichment Schedule - Weekly",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 3"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "sales-enrich-001",
+      "name": "Weekly Wednesday 10:00 UTC"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate enrichment job request with signal source context\nconst weekDate = new Date().toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    weekDate,\n    idempotencyKey: `sales-enrichment:weekly:${weekDate}`,\n    prompt: `Run prospect enrichment cycle with signal detection for all enabled verticals.\\n\\n**IMPORTANT**: Read config.json at the runner working directory to get the verticals and salesMarketing configuration.\\n\\nFor each enabled vertical:\\n1. Query Attio for prospects in that vertical with Priority=High or lead_score >= 40 and incomplete data\\n2. Dispatch sales-researcher to enrich with decision-maker contacts, company size, CE status\\n3. Have sales-researcher check the signal sources defined in the vertical's signalSources config (focus on wednesday_1000 schedule sources)\\n4. Re-score enriched prospects using the vertical's scoring matrix\\n5. Check for MQL promotion: lead_score >= salesMarketing.mqlThreshold AND signal within salesMarketing.mqlSignalWindowDays\\n6. Apply outreach decay for stale sequences per salesMarketing.outreachDecayDays\\n\\nReport all signal detections, score changes, and MQL promotions.`,\n    context: JSON.stringify({\n      instruction: \"Read config.json verticals section for signal sources and scoring matrices. Use salesMarketing section for MQL thresholds. Focus on signal sources scheduled for wednesday_1000.\",\n      configPath: \"claude-runner/config.json\",\n      configKeys: [\"verticals\", \"salesMarketing\"],\n      focusSchedule: \"wednesday_1000\"\n    })\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "sales-enrich-002",
+      "name": "Prepare Enrichment Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/agent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"sales-development\",\n  \"prompt\": {{ JSON.stringify($json.prompt) }},\n  \"context\": {{ JSON.stringify($json.context) }},\n  \"source\": {\n    \"workflow\": \"Sales_Enrichment_Schedule\",\n    \"triggeredBy\": \"schedule:weekly-enrichment\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "sales-enrich-003",
+      "name": "Dispatch Sales Development",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_SALES }}",
+        "text": "*Weekly Enrichment & Signal Detection Cycle Started*\n\nWeek of: {{ $('Prepare Enrichment Request').item.json.weekDate }}\n\nEnriching prospects and detecting buying signals across enabled verticals. MQL checks included. Results will be posted when complete.",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "sales-enrich-004",
+      "name": "Notify Sales Space",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Wednesday 10:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Prepare Enrichment Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Enrichment Request": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Sales Development",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Sales Development": {
+      "main": [
+        [
+          {
+            "node": "Notify Sales Space",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

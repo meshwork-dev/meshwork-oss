@@ -247,7 +247,7 @@ Issues with `[UI]` prefix in summary or `needs-ui-work` label are automatically 
 
 ## Shared Team Email
 
-**Email**: `hello@example.com` — shared Google inbox monitored by the CertPilot AI team.
+**Email**: `hello@certpilot.co.uk` — shared Google inbox monitored by the CertPilot AI team.
 
 All agents are encouraged to proactively sign up for relevant newsletters, mailing lists, and alert feeds using this email. Incoming emails are polled by the N8N Gmail Trigger workflow, classified by sender/subject, and routed to the appropriate agent.
 
@@ -266,4 +266,4 @@ All agents are encouraged to proactively sign up for relevant newsletters, maili
 
 **Agents with sign-up permissions**: `marketing`, `security-agent`, `sales-researcher`, `sales-development`, `product-manager`
 
-**Rules**: Always use `hello@example.com`. Prefer double opt-in. Focus on UK compliance, cybersecurity, defence supply chain, and SaaS sources.
+**Rules**: Always use `hello@certpilot.co.uk`. Prefer double opt-in. Focus on UK compliance, cybersecurity, defence supply chain, and SaaS sources.

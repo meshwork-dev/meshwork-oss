@@ -1,0 +1,38 @@
+{
+  "modelProviders": {
+    "openai": [
+      {
+        "id": "qwen/qwen3-coder-30b",
+        "baseUrl": "http://host.docker.internal:1234/v1",
+        "envKey": "LMSTUDIO_API_KEY"
+      },
+      {
+        "id": "openai/gpt-oss-20b",
+        "baseUrl": "http://host.docker.internal:1234/v1",
+        "envKey": "LMSTUDIO_API_KEY"
+      },
+      {
+        "id": "glm-4-32b-0414",
+        "baseUrl": "http://host.docker.internal:1234/v1",
+        "envKey": "LMSTUDIO_API_KEY"
+      }
+    ]
+  },
+  "env": {
+    "LMSTUDIO_API_KEY": "lm-studio"
+  },
+  "security": {
+    "auth": {
+      "selectedType": "openai"
+    }
+  },
+  "model": {
+    "name": "qwen/qwen3-coder-30b"
+  },
+  "permissions": {
+    "defaultMode": "yolo"
+  },
+  "telemetry": {
+    "enabled": false
+  }
+}

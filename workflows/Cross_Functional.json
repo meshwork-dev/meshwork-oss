@@ -1,0 +1,272 @@
+{
+  "name": "Cross-Functional Triggers",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cross-functional/trigger",
+        "options": {
+          "responseData": "={ \"ok\": true }"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "cf-001",
+      "name": "Cross-Functional Webhook",
+      "webhookId": ""
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json;\nconst event = body.event || '';\nconst labels = body.labels || [];\nconst issueKey = body.issueKey || '';\nconst summary = body.summary || '';\n\nconst actions = [];\n\n// Feature shipped with needs-marketing -> dispatch marketing\nif (event === 'feature-shipped' && labels.includes('needs-marketing')) {\n  actions.push({ type: 'dispatch', agent: 'marketing', issueKey, prompt: `Create marketing content for shipped feature: ${summary}` });\n}\n\n// Feature shipped -> check if release notes needed\nif (event === 'feature-shipped' && labels.includes('needs-release-note')) {\n  actions.push({ type: 'dispatch', agent: 'product-manager', issueKey, action: 'release-notes' });\n}\n\n// Bug resolved -> notify sales if customer-reported\nif (event === 'bug-resolved' && labels.includes('customer-reported')) {\n  actions.push({ type: 'notify', channel: 'sales', message: `Bug ${issueKey} resolved: ${summary}. Customer can be notified.` });\n}\n\n// Feedback classified as bug -> auto-triage\nif (event === 'feedback-classified' && labels.includes('Bug')) {\n  actions.push({ type: 'dispatch', agent: 'bug-triage', issueKey });\n}\n\nif (actions.length === 0) {\n  actions.push({ type: 'skip', reason: `No cross-functional action for event=${event} labels=${labels.join(',')}` });\n}\n\nreturn actions.map(a => ({ json: a }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "cf-002",
+      "name": "Route Event"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputIndex": 0,
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "dispatch",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "outputIndex": 1,
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "notify",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "cf-003",
+      "name": "Action Type"
+    },
+    {
+      "parameters": {
+        "jsCode": "const action = $json;\nconst issueKey = action.issueKey || '';\nconst agent = action.agent || '';\nconst prompt = action.prompt || '';\nconst actionType = action.action || '';\n\nconst body = {\n  issueKey,\n  agent,\n  workingDir: '{{DEFAULT_WORKING_DIR}}',\n  callbackUrl: '{{N8N_PUBLIC_URL}}/webhook/runner/callback'\n};\n\nif (prompt) {\n  body.description = prompt;\n}\n\nif (actionType) {\n  body.action = actionType;\n}\n\nreturn [{ json: {\n  body,\n  idempotencyKey: `cf:${agent}:${issueKey}:${Date.now()}`\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -100
+      ],
+      "id": "cf-004",
+      "name": "Prepare Dispatch"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://runner:3210/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-runner-secret",
+              "value": "={{ $env.RUNNER_SECRET }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        -100
+      ],
+      "id": "cf-005",
+      "name": "Dispatch to Runner"
+    },
+    {
+      "parameters": {
+        "jsCode": "const action = $json;\nconst channel = action.channel || 'engineering';\nconst message = action.message || 'Cross-functional notification';\n\nconst chatMap = {\n  sales: '-5115168416',\n  engineering: '-5037701631'\n};\n\nconst chatId = chatMap[channel] || chatMap.engineering;\n\nreturn [{ json: { chatId, message } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        100
+      ],
+      "id": "cf-006",
+      "name": "Prepare Notification"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=*Cross-Functional Update*\n\n{{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        100
+      ],
+      "id": "cf-007",
+      "name": "Send Notification",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "-5037701631",
+        "text": "=*Agent Dispatched*\n\nCross-functional trigger dispatched *{{ $('Prepare Dispatch').item.json.body.agent }}* for {{ $('Prepare Dispatch').item.json.body.issueKey }}.",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        -100
+      ],
+      "id": "cf-008",
+      "name": "Confirm Dispatch",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Cross-Functional Webhook": {
+      "main": [
+        [
+          {
+            "node": "Route Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Event": {
+      "main": [
+        [
+          {
+            "node": "Action Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Type": {
+      "main": [
+        [
+          {
+            "node": "Prepare Dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Prepare Dispatch": {
+      "main": [
+        [
+          {
+            "node": "Dispatch to Runner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch to Runner": {
+      "main": [
+        [
+          {
+            "node": "Confirm Dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

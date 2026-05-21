@@ -1,0 +1,132 @@
+{
+  "name": "Security Scan Schedule",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 20 * * 0"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "security-001",
+      "name": "Weekly Sunday 8pm"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate security scan job request\nconst scanId = `security-scan-${Date.now()}`;\n\nreturn [{\n  json: {\n    scanId,\n    timestamp: new Date().toISOString(),\n    idempotencyKey: `security-scan:weekly:${new Date().toISOString().split('T')[0]}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "security-002",
+      "name": "Prepare Scan Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"security-agent\",\n  \"issueKey\": \"SECURITY-SCAN\",\n  \"summary\": \"Weekly security scan\",\n  \"description\": \"Automated weekly security scan. Run npm audit and check for vulnerabilities. Create Jira issues for any critical or high severity findings.\",\n  \"workingDir\": \"{{DEFAULT_WORKING_DIR}}\",\n  \"callbackUrl\": \"{{N8N_PUBLIC_URL}}/webhook/security/callback\",\n  \"gchat\": {\n    \"space\": \"{{GCHAT_ENGINEERING_SPACE}}\",\n    \"thread\": null\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "security-003",
+      "name": "Dispatch Security Scan",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ENGINEERING }}",
+        "text": "*Weekly Security Scan Started*\n\nScan ID: {{ $('Prepare Scan Request').item.json.scanId }}\n\nResults will be posted when complete.",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "security-004",
+      "name": "Notify Engineering Space",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Sunday 8pm": {
+      "main": [
+        [
+          {
+            "node": "Prepare Scan Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Scan Request": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Security Scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Security Scan": {
+      "main": [
+        [
+          {
+            "node": "Notify Engineering Space",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

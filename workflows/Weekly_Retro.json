@@ -1,0 +1,170 @@
+{
+  "name": "Weekly Retro - Friday KPI Review",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 16 * * 5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "retro-001",
+      "name": "Friday 16:00"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://runner:3210/api/kpi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-runner-secret",
+              "value": "={{ $env.RUNNER_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        220,
+        0
+      ],
+      "id": "retro-002",
+      "name": "Fetch KPI Data",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const kpi = $json || {};\nconst date = new Date().toISOString().split('T')[0];\n\nlet topic = `Weekly Retrospective ${date}: `;\ntopic += `This week we shipped ${kpi.featuresShipped || '?'} features. `;\ntopic += `Pipeline completion: ${kpi.pipelineCompletionRate || '?'}%. `;\ntopic += `QG first-pass: ${kpi.firstPassQualityGateRate || '?'}%. `;\ntopic += `Rework rate: ${kpi.reworkRate || '?'}%. `;\ntopic += `Cost: $${kpi.weeklySpend || '?'}. `;\ntopic += `What went well? What should we improve? What are the priorities for next week?`;\n\nreturn [{ json: { \n  topic, \n  agents: ['product-manager', 'engineer-planner', 'qa-agent', 'architect-jets'],\n  maxRounds: 2,\n  autoDiscuss: true,\n  callbackUrl: '{{N8N_PUBLIC_URL}}/webhook/meeting/callback',\n  telegram: { chatId: '-5037701631' },\n  date\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "retro-003",
+      "name": "Build Retro Topic"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://runner:3210/meeting",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-runner-secret",
+              "value": "={{ $env.RUNNER_SECRET }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "=retro-{{ $json.date }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ topic: $json.topic, agents: $json.agents, maxRounds: $json.maxRounds, autoDiscuss: $json.autoDiscuss, callbackUrl: $json.callbackUrl, telegram: $json.telegram }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        660,
+        0
+      ],
+      "id": "retro-004",
+      "name": "Start Retro Meeting"
+    },
+    {
+      "parameters": {
+        "chatId": "-5037701631",
+        "text": "=*Weekly Retro Starting*\n\nKPI review and retrospective meeting with PM, Planner, QA, and Architect.\n\n_Topic: {{ $('Build Retro Topic').item.json.topic.substring(0, 200) }}_\n\n_Discussion and outcomes will be posted shortly._",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "retro-005",
+      "name": "Notify Retro Start",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Friday 16:00": {
+      "main": [
+        [
+          {
+            "node": "Fetch KPI Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch KPI Data": {
+      "main": [
+        [
+          {
+            "node": "Build Retro Topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Retro Topic": {
+      "main": [
+        [
+          {
+            "node": "Start Retro Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Retro Meeting": {
+      "main": [
+        [
+          {
+            "node": "Notify Retro Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

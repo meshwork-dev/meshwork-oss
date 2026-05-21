@@ -1,0 +1,150 @@
+{
+  "name": "Feedback Capture - Telegram to Jira via PM Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ]
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "feedback-001",
+      "name": "Telegram Feedback Trigger",
+      "webhookId": "",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract feedback from Google Chat event\nconst body = $json.body || $json;\nconst message = body.message || body;\nconst sender = message.sender || {};\nconst space = message.space || {};\nconst thread = message.thread || {};\n\nconst text = (message.text || message.argumentText || '').trim();\nconst user = sender.displayName || sender.name || 'unknown';\nconst spaceName = space.name || '';\nconst threadName = thread.name || '';\n\n// Skip bot messages and empty messages\nif (sender.type === 'BOT' || !text) {\n  return [{ json: { skip: true, reason: 'Bot message or empty' } }];\n}\n\n// Build prompt for PM agent\nconst prompt = `Classify and process the following user feedback from Google Chat:\\n\\n**From**: User ${user}\\n**Space**: ${spaceName}\\n**Message**: ${text}\\n\\nInstructions:\\n1. Classify as: Bug Report, Feature Request, UX Issue, or General Feedback\\n2. For Bug Reports: Create a Jira Bug issue with severity assessment\\n3. For Feature Requests: Create a Jira Story in the appropriate Epic (CER-7 to CER-14)\\n4. For UX Issues: Create a Jira Task with 'needs-ui-work' label\\n5. For General Feedback: Log in Confluence under Product Feedback\\n\\nAlways include the original message text in the Jira description.`;\n\n// Create a timestamp-based key for idempotency\nconst ts = message.createTime || new Date().toISOString();\n\nreturn [{ json: {\n  skip: false,\n  text,\n  user,\n  space: spaceName,\n  prompt,\n  idempotencyKey: `feedback:${spaceName}:${ts}`\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "feedback-002",
+      "name": "Extract Feedback"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ !$json.skip }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        0
+      ],
+      "id": "feedback-003",
+      "name": "Should Process?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/agent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"product-manager\",\n  \"prompt\": {{ JSON.stringify($json.prompt) }},\n  \"context\": \"Google Chat feedback from product-feedback space. User: {{ $json.user }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -100
+      ],
+      "id": "feedback-004",
+      "name": "Dispatch PM Agent",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Feedback Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Feedback": {
+      "main": [
+        [
+          {
+            "node": "Should Process?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Process?": {
+      "main": [
+        [
+          {
+            "node": "Dispatch PM Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

@@ -1,0 +1,176 @@
+{
+  "name": "Email Inbox Trigger - Newsletter & Alert Router",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "email/inbound",
+        "options": {
+          "responseData": "={ \"ok\": true }"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "email-webhook",
+      "name": "Email Webhook",
+      "webhookId": ""
+    },
+    {
+      "parameters": {
+        "jsCode": "// Accepts email data from Google Apps Script forwarder\n// Expected fields: from, subject, body, date, to, cc, threadId\nconst raw = $json.body || $json;\nconst from = (raw.from || '').toLowerCase();\nconst subject = (raw.subject || '').toLowerCase();\nconst body = (raw.body || raw.text || '').substring(0, 3000);\nconst date = raw.date || new Date().toISOString();\nconst threadId = raw.threadId || '';\n\n// Classification rules\nlet category = 'general';\nlet agent = null;\nlet priority = 'Medium';\nlet tags = [];\n\n// Security advisories\nif (from.includes('ncsc') || from.includes('cert.gov') || subject.includes('vulnerability') || subject.includes('security advisory') || subject.includes('threat')) {\n  category = 'security-advisory';\n  agent = 'security-agent';\n  priority = 'High';\n  tags.push('security', 'advisory');\n}\n\n// IASME / Cyber Essentials\nelse if (from.includes('iasme') || subject.includes('cyber essentials') || subject.includes('iasme')) {\n  category = 'ce-update';\n  agent = 'marketing';\n  priority = 'Medium';\n  tags.push('cyber-essentials', 'linkedin-opportunity');\n}\n\n// ICO / Data Protection\nelse if (from.includes('ico.org') || subject.includes('data protection') || subject.includes('gdpr') || subject.includes('ico')) {\n  category = 'data-protection';\n  agent = 'marketing';\n  priority = 'Medium';\n  tags.push('gdpr', 'data-protection', 'linkedin-opportunity');\n}\n\n// Defence / MOD\nelse if (from.includes('gov.uk') || subject.includes('def stan') || subject.includes('defcon') || subject.includes('defence') || subject.includes('mod digital')) {\n  category = 'defence-update';\n  agent = 'marketing';\n  priority = 'Medium';\n  tags.push('defence', 'def-stan');\n}\n\n// Contracts Finder\nelse if (from.includes('contractsfinder') || from.includes('contracts finder') || subject.includes('contract') || subject.includes('tender') || subject.includes('procurement')) {\n  category = 'procurement';\n  agent = 'sales-researcher';\n  priority = 'High';\n  tags.push('procurement', 'prospect');\n}\n\n// ADS Group\nelse if (from.includes('adsgroup') || subject.includes('ads group') || subject.includes('aerospace') || subject.includes('defence supply chain')) {\n  category = 'industry';\n  agent = 'marketing';\n  priority = 'Low';\n  tags.push('industry', 'ads-group');\n}\n\n// Newsletter / general industry\nelse if (subject.includes('newsletter') || subject.includes('digest') || subject.includes('weekly') || subject.includes('monthly')) {\n  category = 'newsletter';\n  agent = 'marketing';\n  priority = 'Low';\n  tags.push('newsletter');\n}\n\n// Events / webinars\nelse if (subject.includes('event') || subject.includes('webinar') || subject.includes('conference') || subject.includes('register')) {\n  category = 'event';\n  agent = 'product-manager';\n  priority = 'Low';\n  tags.push('event');\n}\n\nconst idempotencyKey = `email:${category}:${Buffer.from(subject + date).toString('base64').substring(0, 32)}`;\n\nreturn [{ json: {\n  category,\n  agent,\n  priority,\n  tags,\n  idempotencyKey,\n  email: {\n    from: raw.from || '',\n    subject: raw.subject || '',\n    date,\n    bodyPreview: body.substring(0, 1500),\n    fullBody: body,\n    threadId\n  }\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "email-classify",
+      "name": "Classify Email"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "has-agent",
+              "leftValue": "={{ $json.agent !== null }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "email-check-agent",
+      "name": "Has Agent?"
+    },
+    {
+      "parameters": {
+        "url": "=http://runner:3210/agent",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: $json.agent, prompt: `Analyse this email and take appropriate action based on your role.\\n\\nFrom: ${$json.email.from}\\nSubject: ${$json.email.subject}\\nDate: ${$json.email.date}\\nCategory: ${$json.category}\\nPriority: ${$json.priority}\\nTags: ${$json.tags.join(', ')}\\n\\nContent:\\n${$json.email.bodyPreview}`, context: `Source: shared email inbox. Category: ${$json.category}. Priority: ${$json.priority}.` }) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 10000
+        },
+        "method": "POST"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        -100
+      ],
+      "id": "email-dispatch",
+      "name": "Dispatch to Agent",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_NOTIFICATIONS || '-5292536301' }}",
+        "text": "={{ `*Email Received*\\n\\nFrom: ${$('Classify Email').item.json.email.from}\\nSubject: ${$('Classify Email').item.json.email.subject}\\nCategory: ${$('Classify Email').item.json.category}\\nPriority: ${$('Classify Email').item.json.priority}\\n\\n${$('Classify Email').item.json.agent ? `Dispatched to: ${$('Classify Email').item.json.agent}` : 'No agent match — logged only.'}` }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        100
+      ],
+      "id": "email-notify",
+      "name": "Notify Telegram",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Email Webhook": {
+      "main": [
+        [
+          {
+            "node": "Classify Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Email": {
+      "main": [
+        [
+          {
+            "node": "Has Agent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Agent?": {
+      "main": [
+        [
+          {
+            "node": "Dispatch to Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

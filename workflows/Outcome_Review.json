@@ -1,0 +1,139 @@
+{
+  "name": "Outcome Review - Bi-Weekly Feature Review",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 1"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "outcome-review-001",
+      "name": "Bi-Weekly Monday 10am"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if this is an outcome review week (every 2 weeks)\nconst now = new Date();\nconst weekNumber = Math.ceil((now.getTime() - new Date(now.getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000));\nconst isBiWeekly = weekNumber % 2 === 0;\n\nif (!isBiWeekly) {\n  return [{ json: { skip: true, reason: 'Not a review week' } }];\n}\n\nreturn [{ json: {\n  skip: false,\n  reviewDate: now.toISOString().split('T')[0],\n  prompt: `Perform an Outcome Review for features accepted in the last 2 weeks.\\n\\n1. Query Jira for recently completed features: project = CER AND status = Done AND resolved >= -14d\\n2. For each feature, check for related bugs and user feedback\\n3. Classify outcomes as Healthy, Needs Attention, or Problematic\\n4. Post the review summary to Confluence under Product Reviews\\n5. Flag any features that need follow-up action\\n\\nFollow the Outcome Review process defined in your agent instructions.`\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "outcome-review-002",
+      "name": "Check Bi-Weekly"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ !$json.skip }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        0
+      ],
+      "id": "outcome-review-003",
+      "name": "Is Review Week?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/agent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"product-manager\",\n  \"prompt\": {{ JSON.stringify($json.prompt) }},\n  \"context\": \"Scheduled bi-weekly outcome review. Review date: {{ $json.reviewDate }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -100
+      ],
+      "id": "outcome-review-004",
+      "name": "Dispatch PM Agent",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Bi-Weekly Monday 10am": {
+      "main": [
+        [
+          {
+            "node": "Check Bi-Weekly",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Bi-Weekly": {
+      "main": [
+        [
+          {
+            "node": "Is Review Week?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Review Week?": {
+      "main": [
+        [
+          {
+            "node": "Dispatch PM Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

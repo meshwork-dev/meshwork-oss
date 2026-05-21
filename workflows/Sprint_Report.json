@@ -1,0 +1,132 @@
+{
+  "name": "Sprint Report Schedule",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 17 * * 5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "sprint-001",
+      "name": "Friday 5pm (End of Sprint)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate sprint report job request\nconst reportId = `sprint-report-${Date.now()}`;\nconst today = new Date();\nconst sprintName = `Sprint ${Math.ceil((today.getDate()) / 14)}`; // Approximate sprint\n\nreturn [{\n  json: {\n    reportId,\n    sprintName,\n    timestamp: today.toISOString(),\n    idempotencyKey: `sprint-report:${today.toISOString().split('T')[0]}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "sprint-002",
+      "name": "Prepare Report Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"sprint-reporter\",\n  \"issueKey\": \"SPRINT-REPORT\",\n  \"summary\": \"End of Sprint Report\",\n  \"description\": \"Generate end-of-sprint velocity report for {{ $json.sprintName }}. Include completed work, carry-over, and velocity metrics.\",\n  \"workingDir\": \"{{DEFAULT_WORKING_DIR}}\",\n  \"callbackUrl\": \"{{N8N_PUBLIC_URL}}/webhook/runner/callback\",\n  \"gchat\": {\n    \"space\": \"{{GCHAT_ENGINEERING_SPACE}}\",\n    \"thread\": null\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "sprint-003",
+      "name": "Dispatch Sprint Report",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ENGINEERING }}",
+        "text": "*Sprint Report Generation Started*\n\nReport ID: {{ $('Prepare Report Request').item.json.reportId }}\nSprint: {{ $('Prepare Report Request').item.json.sprintName }}\n\nFull report will be posted when complete.",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "sprint-004",
+      "name": "Notify Sprint Report Started",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Friday 5pm (End of Sprint)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Report Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Report Request": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Sprint Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Sprint Report": {
+      "main": [
+        [
+          {
+            "node": "Notify Sprint Report Started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

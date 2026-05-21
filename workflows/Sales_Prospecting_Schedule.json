@@ -1,0 +1,137 @@
+{
+  "name": "Sales Prospecting Schedule - Weekly",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "sales-prospect-001",
+      "name": "Weekly Monday 08:00 UTC"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate prospecting job request with vertical scoring config\nconst weekDate = new Date().toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    weekDate,\n    idempotencyKey: `sales-prospecting:weekly:${weekDate}`,\n    prompt: `Run weekly prospecting cycle for all enabled verticals.\\n\\n**IMPORTANT**: Read config.json at the runner working directory to get the verticals configuration. Look at the 'verticals' key for enabled vertical profiles and their scoring matrices. Also read the 'salesMarketing' key for MQL thresholds and outreach decay settings.\\n\\nFor each enabled vertical:\\n1. Dispatch sales-researcher to check signal sources defined in the vertical's signalSources config\\n2. Apply the scoring matrix from the vertical's scoring.signals config to calculate lead_score for each prospect\\n3. Set Status (Hot/Warm/Cold) based on the vertical's scoring.thresholds\\n4. Check for prospects crossing the MQL threshold (salesMarketing.mqlThreshold) with a recent signal within the signal window (salesMarketing.mqlSignalWindowDays)\\n5. Apply outreach decay for stale sequences (salesMarketing.outreachDecayDays)\\n\\nUpdate the Sales Pipeline Report in Confluence with scoring distribution by vertical, top un-contacted prospects, and MQL activity.`,\n    context: JSON.stringify({\n      instruction: \"Read config.json verticals section for scoring matrices. Use salesMarketing section for MQL and decay thresholds. Do NOT hardcode scoring values.\",\n      configPath: \"claude-runner/config.json\",\n      configKeys: [\"verticals\", \"salesMarketing\"]\n    })\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "sales-prospect-002",
+      "name": "Prepare Prospecting Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/agent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"sales-development\",\n  \"prompt\": {{ JSON.stringify($json.prompt) }},\n  \"context\": {{ JSON.stringify($json.context) }},\n  \"source\": {\n    \"workflow\": \"Sales_Prospecting_Schedule\",\n    \"triggeredBy\": \"schedule:weekly-prospecting\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "sales-prospect-003",
+      "name": "Dispatch Sales Development",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_SALES }}",
+        "text": "*Weekly Prospecting Cycle Started*\n\nWeek of: {{ $('Prepare Prospecting Request').item.json.weekDate }}\n\nSales development agent is running config-driven prospecting with multi-vertical scoring. Results will be posted when complete.",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "sales-prospect-004",
+      "name": "Notify Sales Space",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Monday 08:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Prepare Prospecting Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Prospecting Request": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Sales Development",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Sales Development": {
+      "main": [
+        [
+          {
+            "node": "Notify Sales Space",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

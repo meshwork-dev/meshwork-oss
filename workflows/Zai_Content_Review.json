@@ -1,0 +1,215 @@
+{
+  "name": "Z.ai Content Proofreader",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Z.ai Content Proofreader",
+        "formDescription": "Review and improve marketing content using GLM-5 with CertPilot brand voice rules.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Confluence Page ID",
+              "fieldType": "text",
+              "requiredField": false,
+              "placeholder": "e.g., 12345678 (leave blank to paste raw content below)"
+            },
+            {
+              "fieldLabel": "Raw Content",
+              "fieldType": "textarea",
+              "requiredField": false,
+              "placeholder": "Paste the content to review here (used if no Confluence Page ID is provided)"
+            },
+            {
+              "fieldLabel": "Content Type",
+              "fieldType": "dropdown",
+              "requiredField": true,
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "linkedin-post"
+                  },
+                  {
+                    "option": "blog-article"
+                  },
+                  {
+                    "option": "email-copy"
+                  },
+                  {
+                    "option": "website-copy"
+                  },
+                  {
+                    "option": "social-caption"
+                  },
+                  {
+                    "option": "press-release"
+                  },
+                  {
+                    "option": "general"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Focus Areas",
+              "fieldType": "text",
+              "requiredField": false,
+              "placeholder": "e.g., tone, UK spelling, technical accuracy, CTA strength"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "zai-content-review-001",
+      "name": "Content Review Form",
+      "webhookId": ""
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare content for review\nconst confluencePageId = $json['Confluence Page ID'] || $json.confluencePageId || '';\nconst rawContent = $json['Raw Content'] || $json.rawContent || '';\nconst contentType = $json['Content Type'] || $json.contentType || 'general';\nconst focusAreas = $json['Focus Areas'] || $json.focusAreas || '';\n\n// Determine content source\nlet contentToReview = '';\nlet contentSource = '';\n\nif (rawContent.trim()) {\n  contentToReview = rawContent;\n  contentSource = 'raw-input';\n} else if (confluencePageId.trim()) {\n  // Note: Confluence content would need to be fetched.\n  // For now, pass the page ID and note it in the prompt.\n  contentToReview = `[Content from Confluence Page ID: ${confluencePageId} — if this was not pre-fetched, the reviewer will note that the content needs to be provided]`;\n  contentSource = `confluence:${confluencePageId}`;\n} else {\n  contentToReview = 'ERROR: No content provided. Please provide either a Confluence Page ID or paste raw content.';\n  contentSource = 'none';\n}\n\nconst contentTypeContext = {\n  'linkedin-post': 'LinkedIn post (150-250 words, strong hook, 3-5 hashtags, scannable with line breaks)',\n  'blog-article': 'Blog article (800-1200 words, SEO headings, practical takeaways, clear CTAs)',\n  'email-copy': 'Marketing email (subject under 50 chars, 250-400 words, single CTA, mobile-friendly)',\n  'website-copy': 'Website copy (concise, benefit-led, clear hierarchy, conversion-focused)',\n  'social-caption': 'Social media caption (punchy, platform-appropriate, hashtags)',\n  'press-release': 'Press release (inverted pyramid, quotes, boilerplate, newswire-ready)',\n  'general': 'General marketing content'\n};\n\nconst systemPrompt = `You are a senior content editor and brand guardian for CertPilot.\\n\\n## Brand Voice Rules\\n- Clear, confident, warm, action-oriented\\n- Practitioner tone — write as someone who works in compliance, not a vendor\\n- UK English ALWAYS: defence (not defense), organisation (not organization), behaviour (not behavior), recognise (not recognize), colour (not color), licence (not license for noun), centre (not center)\\n- Active voice preferred over passive\\n- Specific claims backed by data (410+ controls, 70% evidence reuse, 6 frameworks)\\n- No jargon without explanation\\n- No generic marketing fluff\\n\\n## Product Context\\n- CertPilot: Multi-framework compliance platform for UK SMEs\\n- Frameworks: Def Stan 05-138, ISO 27001, SOC 2, IASME Governance, Cyber Essentials, DCC (L0-L3)\\n- Target: UK SMEs (10-100 employees) in defence supply chain\\n- DEFCON 658 makes DCC mandatory for MOD suppliers\\n\\n## Content Type: ${contentTypeContext[contentType] || contentTypeContext['general']}\\n\\n## Review Approach\\nProvide a structured review with:\\n1. **Overall Assessment** — quality score (1-10) and one-line verdict\\n2. **UK English Corrections** — any American spellings or non-UK conventions\\n3. **Brand Voice Issues** — deviations from CertPilot tone\\n4. **Content Structure** — improvements for the specific content type\\n5. **Factual Accuracy** — any incorrect claims about frameworks/regulations\\n6. **Suggested Rewrites** — improved versions of weak sections\\n7. **Final Polished Version** — the complete content rewritten with all fixes applied`;\n\nconst userPrompt = `Review and improve the following ${contentTypeContext[contentType] || 'marketing content'}.\\n${focusAreas ? '\\nPay special attention to: ' + focusAreas + '\\n' : ''}\\n---\\nCONTENT TO REVIEW:\\n\\n${contentToReview}\\n---\\n\\nProvide your structured review following the format specified in your instructions.`;\n\nreturn [{\n  json: {\n    confluencePageId,\n    contentType,\n    contentSource,\n    focusAreas,\n    systemPrompt,\n    userPrompt\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "zai-content-review-002",
+      "name": "Build Review Prompt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.z.ai/api/anthropic/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"GLM-5\",\n  \"max_tokens\": 4096,\n  \"system\": {{ JSON.stringify($json.systemPrompt) }},\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.userPrompt) }}\n    }\n  ]\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "zai-content-review-003",
+      "name": "Call GLM-5 for Review",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse GLM-5 review response\nconst response = $input.item.json;\nconst contentType = $('Build Review Prompt').item.json.contentType;\nconst contentSource = $('Build Review Prompt').item.json.contentSource;\n\nlet reviewContent = '';\nif (response.content && Array.isArray(response.content)) {\n  reviewContent = response.content\n    .filter(block => block.type === 'text')\n    .map(block => block.text)\n    .join('\\n');\n} else if (typeof response === 'string') {\n  reviewContent = response;\n}\n\nconst inputTokens = response.usage?.input_tokens || 0;\nconst outputTokens = response.usage?.output_tokens || 0;\n\n// Try to extract the quality score from the review\nconst scoreMatch = reviewContent.match(/(?:quality score|score)[:\\s]*([\\d.]+)\\s*\\/\\s*10/i) ||\n                   reviewContent.match(/([\\d.]+)\\s*\\/\\s*10/i);\nconst qualityScore = scoreMatch ? scoreMatch[1] : 'N/A';\n\nconst notificationText = `*Content Review Complete*\\nType: ${contentType} | Source: ${contentSource}\\nQuality Score: ${qualityScore}/10\\nTokens: ${inputTokens} in / ${outputTokens} out\\n\\n${reviewContent.substring(0, 3500)}${reviewContent.length > 3500 ? '\\n\\n_[Truncated — full review available in workflow execution]_' : ''}`;\n\nreturn [{\n  json: {\n    contentType,\n    contentSource,\n    qualityScore,\n    reviewContent,\n    inputTokens,\n    outputTokens,\n    notificationText\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "zai-content-review-004",
+      "name": "Parse Review Results"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_MARKETING }}",
+        "text": "={{ $json.notificationText }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "zai-content-review-005",
+      "name": "Post to Google Chat",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Content Review Form": {
+      "main": [
+        [
+          {
+            "node": "Build Review Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Review Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call GLM-5 for Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call GLM-5 for Review": {
+      "main": [
+        [
+          {
+            "node": "Parse Review Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Review Results": {
+      "main": [
+        [
+          {
+            "node": "Post to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

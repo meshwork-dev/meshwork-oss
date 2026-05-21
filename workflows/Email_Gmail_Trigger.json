@@ -1,0 +1,178 @@
+{
+  "name": "Email Gmail Trigger - Newsletter & Alert Router",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "readStatus": "unread",
+          "receivedAfter": "={{ $now.minus(1, 'hour').toISO() }}"
+        }
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "gmail-trigger",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and sanitise email fields for GLM classification\nconst rawFrom = $json.from;\nconst fromDisplay = typeof rawFrom === 'string' ? rawFrom : (rawFrom?.value?.[0]?.address || rawFrom?.email || rawFrom?.address || String(rawFrom || ''));\nconst subject = String($json.subject || '');\nconst body = String($json.textPlain || $json.textHtml || $json.snippet || '').substring(0, 800);\nconst date = $json.date || $json.internalDate || new Date().toISOString();\nconst messageId = $json.id || $json.messageId || '';\n\n// Sanitise body — strip HTML and collapse whitespace\nconst sanitised = body\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .substring(0, 500)\n  .trim();\n\nconst cbKey = messageId.substring(0, 20) || Date.now().toString(36);\n\n// Build classification prompt\nconst systemPrompt = `You classify emails for CertPilot, a UK cybersecurity compliance SaaS platform that helps SMEs achieve Cyber Essentials, Def Stan 05-138, and other certifications.\n\nReturn ONLY a JSON object (no markdown, no code fences) with these fields:\n\n- category: one of: Security Advisory, CE / IASME Update, Data Protection, Defence Update, Procurement, Industry, Newsletter, Event, Sales Lead, General\n- priority: High (urgent/actionable), Medium (relevant not urgent), Low (informational)\n- suggestedAgent: security-agent | marketing | sales-researcher | product-manager | none\n- emoji: single emoji matching the category\n- reasoning: one sentence explaining why\n\nClassify based on actual content, not just sender domain. Examples:\n- An event invitation from NCSC is an Event, not a Security Advisory\n- A procurement tender is Procurement even from a .gov.uk address\n- A vulnerability disclosure IS a Security Advisory regardless of sender\n- IASME scheme changes are CE / IASME Update\n- A company asking about pricing is a Sales Lead`;\n\nconst userPrompt = `From: ${fromDisplay}\\nSubject: ${subject}\\nBody preview: ${sanitised}`;\n\nreturn [{ json: {\n  from: fromDisplay,\n  subject,\n  date,\n  preview: sanitised,\n  messageId,\n  cbKey,\n  systemPrompt,\n  userPrompt\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "extract-email",
+      "name": "Extract Email Data"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.z.ai/api/anthropic/v1/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.ZAI_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"GLM-5\",\n  \"max_tokens\": 200,\n  \"system\": {{ JSON.stringify($json.systemPrompt) }},\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.userPrompt) }}\n    }\n  ]\n}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "call-glm",
+      "name": "Classify with GLM",
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse GLM classification response (Anthropic format)\nconst email = $node['Extract Email Data'].json;\nlet classification;\n\ntry {\n  const response = $json;\n  const content = response.content?.[0]?.text || '';\n  \n  // Extract JSON from response (handle markdown code blocks)\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    classification = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON in response: ' + content.substring(0, 100));\n  }\n} catch (e) {\n  // Fallback if GLM fails\n  classification = {\n    category: 'General',\n    priority: 'Low',\n    suggestedAgent: 'none',\n    emoji: '\\u2709\\uFE0F',\n    reasoning: 'Classification failed: ' + e.message\n  };\n}\n\nreturn [{ json: {\n  emoji: classification.emoji || '\\u2709\\uFE0F',\n  category: classification.category || 'General',\n  suggestedAgent: classification.suggestedAgent || 'none',\n  priority: classification.priority || 'Low',\n  reasoning: classification.reasoning || '',\n  from: email.from,\n  subject: email.subject,\n  date: email.date,\n  preview: email.preview,\n  messageId: email.messageId,\n  cbKey: email.cbKey\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "parse-classification",
+      "name": "Parse Classification"
+    },
+    {
+      "parameters": {
+        "chatId": "{{TELEGRAM_ADMIN_CHAT_ID}}",
+        "text": "={{ `${$json.emoji} *Email — ${$json.category}* (${$json.priority})\\n\\n*From:* ${$json.from}\\n*Subject:* ${$json.subject}\\n*Date:* ${$json.date}\\n\\n_${$json.preview.substring(0, 200)}_\\n\\n_AI: ${$json.reasoning}_` }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true,
+          "reply_markup": {
+            "inline_keyboard": "={{ JSON.stringify([ [ { text: '🔒 Security', callback_data: 'email:security-agent:' + $json.cbKey }, { text: '📣 Marketing', callback_data: 'email:marketing:' + $json.cbKey } ], [ { text: '💰 Sales', callback_data: 'email:sales-researcher:' + $json.cbKey }, { text: '📋 PM', callback_data: 'email:product-manager:' + $json.cbKey } ], [ { text: '❌ Ignore', callback_data: 'email:ignore:' + $json.cbKey } ] ]) }}"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "email-notify",
+      "name": "Send to Mark",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Email Data": {
+      "main": [
+        [
+          {
+            "node": "Classify with GLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify with GLM": {
+      "main": [
+        [
+          {
+            "node": "Parse Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Classification": {
+      "main": [
+        [
+          {
+            "node": "Send to Mark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

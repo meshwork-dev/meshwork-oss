@@ -1,0 +1,161 @@
+{
+  "name": "LinkedIn Monitor Schedule - Twice Daily",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8,14 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "linkedin-monitor-001",
+      "name": "Weekdays 08:00 and 14:00 UTC"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine AM or PM session\nconst now = new Date();\nconst hour = now.getUTCHours();\nconst session = hour < 12 ? 'am' : 'pm';\nconst dateStr = now.toISOString().split('T')[0];\n\n// Idempotency key prevents duplicate runs for the same session\nconst idempotencyKey = `linkedin-monitor:${dateStr}:${session}`;\n\n// RSS feeds from config — listed here for the prompt so the agent\n// can cross-reference with config.json at runtime\nconst rssFeeds = [\n  { name: 'IASME', url: 'https://iasme.co.uk/feed/', topics: ['cyber essentials', 'CE Plus', 'IASME Governance'] },\n  { name: 'NCSC', url: 'https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml', topics: ['cyber threats', 'guidance', 'supply chain', 'SME security'] },\n  { name: 'ICO', url: 'https://ico.org.uk/about-the-ico/media-centre/news-and-blogs/rss/', topics: ['data protection', 'GDPR', 'enforcement', 'SME guidance'] },\n  { name: 'Def Stan', url: 'https://www.gov.uk/government/organisations/defence-equipment-and-support.atom', topics: ['defence standards', 'Def Stan 05-138', 'procurement'] },\n  { name: 'ADS Group', url: 'https://www.adsgroup.org.uk/feed/', topics: ['aerospace', 'defence', 'security industry'] }\n];\n\nconst prompt = `Monitor authority accounts for new content and draft LinkedIn comments.\n\n**Action**: linkedin-monitor\n**Date**: ${dateStr}\n**Session**: ${session.toUpperCase()} (${hour === 8 ? '08:00' : '14:00'} UTC)\n\n**Instructions**:\n1. Read config.json at salesMarketing.linkedin for commentStyle rules (tone, maxLength, avoidPhrases, brandVoice)\n2. Fetch each RSS/Atom feed below using WebFetch and check for items published in the last 24 hours:\n\n${rssFeeds.map(f => `   - **${f.name}**: ${f.url}\\n     Topics to prioritise: ${f.topics.join(', ')}`).join('\\n')}\n\n3. For each new item found:\n   a. Summarise the content in 2-3 sentences\n   b. Assess urgency: High (< 2 hours old), Medium (2-6 hours), Low (> 6 hours)\n   c. Draft a comment under 300 characters that adds genuine value and ends with a question\n   d. NEVER use: \"Great post!\", \"Interesting!\", \"Thanks for sharing!\", \"Couldn't agree more!\"\n   e. The comment should reflect CertPilot's practitioner experience — not vendor marketing\n\n4. Store all drafts in a single Confluence page:\n   - Space: MKTG\n   - Location: Social Media/LinkedIn Queue/Comment Drafts\n   - Title: \"LI-MONITOR - ${dateStr} - ${session.toUpperCase()}\"\n   - Labels: content-draft, linkedin-monitor\n\n5. If zero new items were found, create the page anyway noting \"No new items found in last 24 hours\" and end your output with the monitor prefix below.\n\n6. End your output with this EXACT format so the workflow can extract counts:\n[AUTO-LINKEDIN-MONITOR] Monitoring complete.\nItems found: N\nComment drafts: N\nConfluence: [page URL]\nAccounts checked: IASME, NCSC, ICO, Def Stan, ADS Group`;\n\nreturn [{\n  json: {\n    dateStr,\n    session,\n    hour,\n    idempotencyKey,\n    prompt\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "linkedin-monitor-002",
+      "name": "Prepare Monitoring Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/agent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"marketing\",\n  \"model\": \"sonnet\",\n  \"prompt\": {{ JSON.stringify($json.prompt) }},\n  \"source\": {\n    \"workflow\": \"LinkedIn_Monitor_Schedule\",\n    \"triggeredBy\": \"schedule:linkedin-monitor\",\n    \"session\": {{ JSON.stringify($json.session) }},\n    \"date\": {{ JSON.stringify($json.dateStr) }}\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "linkedin-monitor-003",
+      "name": "Dispatch Marketing Agent",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the job response to extract monitoring results for Google Chat notification\n// The runner returns a jobId immediately; result is available async via callback.\n// This node constructs a pending notification -- the callback workflow posts\n// the final summary once the agent completes.\nconst jobId = $input.item.json.jobId || 'unknown';\nconst session = $('Prepare Monitoring Request').item.json.session;\nconst dateStr = $('Prepare Monitoring Request').item.json.dateStr;\n\nreturn [{\n  json: {\n    jobId,\n    session,\n    dateStr,\n    messageText: `*LinkedIn Monitoring Started* (${session.toUpperCase()})\n\nDate: ${dateStr}\nSession: ${session === 'am' ? 'Morning (08:00)' : 'Afternoon (14:00)'}\nJob ID: ${jobId}\n\nChecking IASME, NCSC, ICO, Def Stan, ADS Group RSS feeds. Comment drafts will appear in Confluence when complete.\n\n_MKTG > Social Media > LinkedIn Queue > Comment Drafts_`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "linkedin-monitor-004",
+      "name": "Parse Job Response"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_MARKETING }}",
+        "text": "={{ $json.messageText }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "linkedin-monitor-005",
+      "name": "Notify Marketing Space",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekdays 08:00 and 14:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Prepare Monitoring Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Monitoring Request": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Marketing Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Marketing Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Job Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Job Response": {
+      "main": [
+        [
+          {
+            "node": "Notify Marketing Space",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

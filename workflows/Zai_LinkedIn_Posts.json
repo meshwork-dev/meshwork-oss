@@ -1,0 +1,167 @@
+{
+  "name": "Z.ai LinkedIn Post Generation - 3x Weekly",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1,3,5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "zai-linkedin-posts-001",
+      "name": "Mon/Wed/Fri 07:00 UTC"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine posting day and post type rotation\nconst now = new Date();\nconst dateStr = now.toISOString().split('T')[0];\nconst dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];\nconst dayName = dayNames[now.getDay()];\n\n// Post type rotation: Mon=insight, Wed=educational, Fri=engagement\nconst postTypeByDay = {\n  monday: 'insight',\n  wednesday: 'educational',\n  friday: 'engagement'\n};\nconst todayPostType = postTypeByDay[dayName] || 'insight';\n\nconst postTypeDescriptions = {\n  insight: 'Industry commentary or opinion on a compliance/cyber/defence supply chain trend. Take a clear position. Reference real regulation changes, DEFCON 658 deadlines, or market shifts.',\n  educational: 'How-to or explainer about Cyber Essentials, DCC (Defence Cyber Compliance), Def Stan 05-138, ISO 27001, or SOC 2 processes. Practical, actionable advice for SME leaders.',\n  engagement: 'Question, discussion prompt, or defence supply chain challenge. Invite the audience to share their experience. Focus on pain points SMEs actually face.'\n};\n\n// Idempotency check\nconst idempotencyKey = `linkedin-post:${dateStr}`;\n\n// Build the system prompt with full CertPilot brand context\nconst systemPrompt = `You are a senior LinkedIn content strategist for CertPilot, a multi-framework compliance platform for UK SMEs.\n\n## Brand Context\n- Product: CertPilot - Multi-framework compliance platform\n- Target audience: UK SMEs (10-100 employees) in the defence supply chain, plus IT/compliance decision-makers\n- Frameworks covered: Def Stan 05-138, ISO 27001, SOC 2, IASME Governance, Cyber Essentials, DCC (Levels 0-3)\n- Key stats: 410+ controls mapped across frameworks, 70% evidence reuse between frameworks\n- DEFCON 658 deadline makes Defence Cyber Compliance (DCC) mandatory for MOD suppliers\n- Brand voice: Clear, confident, warm, action-oriented. Practitioner tone, NOT vendor marketing.\n- ALWAYS use UK spelling (defence, organisation, behaviour, recognise, etc.)\n\n## LinkedIn Post Rules\n- 150-250 words per post\n- 3-5 relevant hashtags at the end\n- Strong hook in the first 2 lines (this is what shows before \"see more\")\n- NEVER open with generic phrases like \"Excited to share\", \"Thrilled to announce\", \"In today's world\"\n- Write as a thought leader who works in compliance daily, not as a software vendor\n- Include a clear call-to-action or question to drive engagement\n- Use line breaks for readability (LinkedIn rewards scannable content)\n- Reference specific regulations, deadlines, or real industry events where possible`;\n\nconst userPrompt = `Generate 3 LinkedIn post options for today.\n\n**Date**: ${dayName.charAt(0).toUpperCase() + dayName.slice(1)}, ${dateStr}\n**Primary post type**: ${todayPostType}\n\nCreate exactly 3 post options:\n\n**Option 1 (${todayPostType} - PRIMARY):**\n${postTypeDescriptions[todayPostType]}\n\n**Option 2 (${todayPostType === 'insight' ? 'educational' : todayPostType === 'educational' ? 'engagement' : 'insight'}):**\n${postTypeDescriptions[todayPostType === 'insight' ? 'educational' : todayPostType === 'educational' ? 'engagement' : 'insight']}\n\n**Option 3 (${todayPostType === 'insight' ? 'engagement' : todayPostType === 'educational' ? 'insight' : 'educational'}):**\n${postTypeDescriptions[todayPostType === 'insight' ? 'engagement' : todayPostType === 'educational' ? 'insight' : 'educational']}\n\nFormat each option with:\n- A clear \"OPTION 1/2/3\" header with the post type in brackets\n- The full post text ready to copy-paste to LinkedIn\n- Hashtags on a separate final line\n\nMake each post distinct in topic and angle. Avoid repeating the same talking points across options.`;\n\nreturn [{\n  json: {\n    dateStr,\n    dayName,\n    todayPostType,\n    idempotencyKey,\n    systemPrompt,\n    userPrompt\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "zai-linkedin-posts-002",
+      "name": "Build Post Generation Prompt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.z.ai/api/anthropic/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"GLM-5\",\n  \"max_tokens\": 4096,\n  \"system\": {{ JSON.stringify($json.systemPrompt) }},\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.userPrompt) }}\n    }\n  ]\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "zai-linkedin-posts-003",
+      "name": "Call GLM-5 for Posts",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the GLM-5 response and format the 3 post options\nconst response = $input.item.json;\nconst dateStr = $('Build Post Generation Prompt').item.json.dateStr;\nconst dayName = $('Build Post Generation Prompt').item.json.dayName;\nconst todayPostType = $('Build Post Generation Prompt').item.json.todayPostType;\n\n// Extract text from Anthropic Messages API response\nlet postContent = '';\nif (response.content && Array.isArray(response.content)) {\n  postContent = response.content\n    .filter(block => block.type === 'text')\n    .map(block => block.text)\n    .join('\\n');\n} else if (typeof response === 'string') {\n  postContent = response;\n}\n\n// Track token usage\nconst inputTokens = response.usage?.input_tokens || 0;\nconst outputTokens = response.usage?.output_tokens || 0;\n\n// Format notification text\nconst notificationText = `*LinkedIn Post Drafts Ready* (${dayName.charAt(0).toUpperCase() + dayName.slice(1)}, ${dateStr})\\n\\nPrimary type: ${todayPostType}\\nTokens used: ${inputTokens} in / ${outputTokens} out\\n\\n${postContent.substring(0, 2000)}${postContent.length > 2000 ? '\\n\\n_[Truncated - see full output in thread]_' : ''}`;\n\nreturn [{\n  json: {\n    dateStr,\n    dayName,\n    todayPostType,\n    postContent,\n    inputTokens,\n    outputTokens,\n    notificationText\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "zai-linkedin-posts-004",
+      "name": "Parse GLM-5 Response"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_MARKETING }}",
+        "text": "={{ $json.notificationText }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "zai-linkedin-posts-005",
+      "name": "Post to Google Chat",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Mon/Wed/Fri 07:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Build Post Generation Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Post Generation Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call GLM-5 for Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call GLM-5 for Posts": {
+      "main": [
+        [
+          {
+            "node": "Parse GLM-5 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse GLM-5 Response": {
+      "main": [
+        [
+          {
+            "node": "Post to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

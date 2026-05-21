@@ -1,0 +1,223 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\n\nfunction firstItem(x) {\n  if (!x) return null;\n  if (Array.isArray(x)) return x[0] ?? null;\n  if (x.event && typeof x.event === \"object\") return x.event;\n  if (typeof x === \"object\") {\n    const keys = Object.keys(x);\n    const numericKeys = keys.filter(k => /^\\\\d+$/.test(k)).sort((a,b) => Number(a)-Number(b));\n    if (numericKeys.length) return x[numericKeys[0]];\n  }\n  return x;\n}\n\nconst event = firstItem(body);\nif (!event) return [{ json: { skip: true, reason: \"no_event\" } }];\n\n// Ignore bot messages\nif (event.bot_id || event.subtype === \"bot_message\") {\n  return [{ json: { skip: true, reason: \"bot_message\" } }];\n}\n\nif (event.type !== \"message\") {\n  return [{ json: { skip: true, reason: \"not_message\" } }];\n}\n\n// === ROUTING CONFIG ===\n// Add your marketing channel ID here (right-click channel > View details > scroll to bottom)\nconst MARKETING_CHANNEL = \"C0AAULKU604\"; // UPDATE THIS with your actual channel ID\n\nconst isDm = event.channel_type === \"im\" || (typeof event.channel === \"string\" && event.channel.startsWith(\"D\"));\nconst isMarketingChannel = event.channel === MARKETING_CHANNEL;\n\n// Determine agent and conversation context\nlet agent, conversationPrefix;\nif (isMarketingChannel) {\n  agent = \"marketing\";\n  conversationPrefix = \"slack:marketing\";\n} else if (isDm) {\n  agent = \"product-manager\";\n  conversationPrefix = \"slack:pm\";\n} else {\n  // Not a DM and not the marketing channel - skip\n  return [{ json: { skip: true, reason: \"not_monitored_channel\", channel: event.channel } }];\n}\n\nconst text = (event.text || \"\").trim();\nif (!text) {\n  return [{ json: { skip: true, reason: \"empty_text\" } }];\n}\n\nreturn [{\n  json: {\n    skip: false,\n    agent,\n    conversationId: `${conversationPrefix}:${event.channel}`,\n    slack: {\n      channel: event.channel,\n      threadTs: event.thread_ts || event.ts,\n      user: event.user,\n      text\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        0
+      ],
+      "id": "60a8c1ca-ed4a-4683-9d02-e9fc691774d8",
+      "name": "Normalize Slack Event"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "107c9050-2ec5-4140-978d-de9931b60b02",
+              "leftValue": "={{ $json.skip !== true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        832,
+        0
+      ],
+      "id": "a5443da0-ba17-496d-ad05-b0b090295598",
+      "name": "Should process"
+    },
+    {
+      "parameters": {
+        "jsCode": "const job = {\n  agent: $json.agent,\n  message: $json.slack.text,\n  conversationId: $json.conversationId,\n  workingDir: \"{{DEFAULT_WORKING_DIR}}\",\n  callbackUrl: \"{{N8N_PUBLIC_URL}}/webhook/runner/callback\",\n  slack: {\n    channel: $json.slack.channel,\n    threadTs: $json.slack.threadTs,\n    user: $json.slack.user\n  }\n};\n\nreturn [{ json: { job } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        -96
+      ],
+      "id": "6c663e00-bb34-4569-b3ce-fcf1dde3caf6",
+      "name": "Build runner job"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/chat",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.job}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1232,
+        -96
+      ],
+      "id": "6c074578-0899-4b94-ad32-ce9784b4c4bd",
+      "name": "Call runner",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const runner = $node[\"Call runner\"].json || {};\nconst slack = $node[\"Build runner job\"].json.job.slack;\n\nconst text =\n  runner.result ||\n  runner.output ||\n  runner.message ||\n  (typeof runner === \"string\" ? runner : JSON.stringify(runner, null, 2));\n\nreturn [{\n  json: {\n    channel: slack.channel,\n    threadTs: slack.threadTs,\n    text\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        -96
+      ],
+      "id": "fa0ba41a-83fc-4b32-ab19-601b4ba26525",
+      "name": "Format the Slack reply"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{$json.channel}}",
+          "mode": "id"
+        },
+        "text": "={{$json.text}}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        1648,
+        -96
+      ],
+      "id": "d0ef4ce2-e0fc-439a-908d-4fe735dce9b3",
+      "name": "Send a message",
+      "webhookId": "",
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "trigger": [
+          "any_event"
+        ],
+        "watchWorkspace": true,
+        "downloadFiles": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.slackTrigger",
+      "typeVersion": 1,
+      "position": [
+        480,
+        0
+      ],
+      "id": "20a56d43-17f9-4e7f-80af-39ed98eda250",
+      "name": "Slack Trigger",
+      "webhookId": "",
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Normalize Slack Event": {
+      "main": [
+        [
+          {
+            "node": "Should process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should process": {
+      "main": [
+        [
+          {
+            "node": "Build runner job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build runner job": {
+      "main": [
+        [
+          {
+            "node": "Call runner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call runner": {
+      "main": [
+        [
+          {
+            "node": "Format the Slack reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format the Slack reply": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Slack Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

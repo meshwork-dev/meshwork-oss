@@ -1,0 +1,128 @@
+{
+  "name": "Daily Digest - KPI Summary to Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 18 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "digest-001",
+      "name": "Weekdays 6pm"
+    },
+    {
+      "parameters": {
+        "url": "http://runner:3210/api/kpi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-runner-secret",
+              "value": "={{ $env.RUNNER_SECRET }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "digest-002",
+      "name": "Fetch KPI Data",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const kpi = $json.kpi;\nconst t1 = kpi.tier1_business;\nconst t2 = kpi.tier2_operational;\nconst t3 = kpi.tier3_cost;\n\nconst date = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });\n\n// Format percentages\nconst pct = (v) => v !== null && v !== undefined ? (v * 100).toFixed(1) + '%' : 'n/a';\nconst usd = (v) => v !== null && v !== undefined ? '$' + v.toFixed(2) : 'n/a';\n\n// Count bugs fixed (from pipeline completions of bug-fix type)\nconst bugFixPipelines = Object.keys(t2.avgPipelineDuration)\n  .filter(k => k === 'bug-fix')\n  .reduce((sum, k) => sum + (t2.avgPipelineDuration[k].count || 0), 0);\n\n// Top 5 agents by volume\nconst agentEntries = Object.entries(t2.agentSuccessRate)\n  .sort((a, b) => b[1].total - a[1].total)\n  .slice(0, 5);\n\nconst agentLines = agentEntries.map(([name, data]) => {\n  const rate = (data.rate * 100).toFixed(0);\n  return `  ${name}: ${data.total} jobs (${rate}% pass)`;\n}).join('\\n');\n\n// Needs Attention section\nconst issues = [];\nif (t2.stalledJobs && t2.stalledJobs.length > 0) {\n  issues.push(`${t2.stalledJobs.length} stalled job(s)`);\n}\nif (t2.pipelineCompletionRate !== null && t2.pipelineCompletionRate < 0.8) {\n  issues.push(`Pipeline completion rate low: ${pct(t2.pipelineCompletionRate)}`);\n}\nif (t2.reworkRate !== null && t2.reworkRate > 0.2) {\n  issues.push(`High rework rate: ${pct(t2.reworkRate)}`);\n}\nif (t1.humanInterventionRate > 0.15) {\n  issues.push(`Human intervention rate: ${pct(t1.humanInterventionRate)}`);\n}\nif (t3.wastedSpend > 0.15) {\n  issues.push(`Wasted spend: ${pct(t3.wastedSpend)}`);\n}\n\nconst attentionBlock = issues.length > 0\n  ? issues.map(i => `  ⚠ ${i}`).join('\\n')\n  : '  All clear';\n\nconst message = `*Daily Digest - ${date}*\n\n*Shipped*\nFeatures: ${t1.featuresShipped} | Bugs fixed: ${bugFixPipelines} | Pipeline completion: ${pct(t2.pipelineCompletionRate)}\n\n*Quality*\nQG first-pass: ${pct(t2.firstPassQualityGateRate)} | Rework rate: ${pct(t2.reworkRate)} | Stalled: ${t2.stalledJobs ? t2.stalledJobs.length : 0}\n\n*Cost*\nToday: ${usd(t3.dailySpend)} | This week: ${usd(t3.weeklySpend)} | Per feature: ${usd(t2.costPerFeature)}\n\n*Agent Performance*\n${agentLines || '  No agent data'}\n\n*Needs Attention*\n${attentionBlock}`;\n\nreturn [{ json: { message } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "digest-003",
+      "name": "Format Digest Message"
+    },
+    {
+      "parameters": {
+        "chatId": "-5037701631",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "digest-004",
+      "name": "Send to Engineering Chat",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekdays 6pm": {
+      "main": [
+        [
+          {
+            "node": "Fetch KPI Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch KPI Data": {
+      "main": [
+        [
+          {
+            "node": "Format Digest Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Digest Message": {
+      "main": [
+        [
+          {
+            "node": "Send to Engineering Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

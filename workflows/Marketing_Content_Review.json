@@ -1,0 +1,231 @@
+{
+  "name": "Marketing Content Review Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "marketing/content-review",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "webhook-trigger",
+      "name": "Content Review Webhook",
+      "webhookId": "",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const action = $json.body?.action || 'review';\nconst pageId = $json.body?.pageId;\nconst pageTitle = $json.body?.pageTitle;\nconst pageUrl = $json.body?.pageUrl;\nconst reviewer = $json.body?.reviewer;\nconst issueKey = $json.body?.issueKey;\n\nreturn [{\n  json: {\n    action,\n    pageId,\n    pageTitle,\n    pageUrl,\n    reviewer,\n    issueKey,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "parse-request",
+      "name": "Parse Request"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "action-approve",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "approve",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "check-action",
+      "name": "Action Type?"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/content/' + $json.pageId + '/label/content-review' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        660,
+        -100
+      ],
+      "id": "remove-review-label",
+      "name": "Remove Review Label",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/content/' + $json.pageId + '/label' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "[{\"prefix\": \"global\", \"name\": \"content-approved\"}]",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        -100
+      ],
+      "id": "add-approved-label",
+      "name": "Add Approved Label",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "issueComment",
+        "issueIdOrKey": "={{ $json.issueKey }}",
+        "comment": "={{ '[AUTO-MARKETING-APPROVED] Content approved by ' + ($json.reviewer || 'reviewer') + '.\\n\\n**Page:** ' + $json.pageTitle + '\\n**Link:** ' + $json.pageUrl + '\\n\\nContent is now ready for scheduling/publication.' }}"
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -100
+      ],
+      "id": "comment-approved",
+      "name": "Add Approved Comment",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "issueComment",
+        "issueIdOrKey": "={{ $json.issueKey }}",
+        "comment": "={{ '[AUTO-MARKETING-REVIEW] Content submitted for review.\\n\\n**Page:** ' + $json.pageTitle + '\\n**Link:** ' + $json.pageUrl + '\\n**Reviewer:** ' + ($json.reviewer || 'Marketing Team') + '\\n\\nPlease review and approve or request changes.' }}"
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        660,
+        100
+      ],
+      "id": "comment-review-requested",
+      "name": "Add Review Comment",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Content Review Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Request": {
+      "main": [
+        [
+          {
+            "node": "Action Type?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Type?": {
+      "main": [
+        [
+          {
+            "node": "Remove Review Label",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Add Review Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Review Label": {
+      "main": [
+        [
+          {
+            "node": "Add Approved Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Approved Label": {
+      "main": [
+        [
+          {
+            "node": "Add Approved Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

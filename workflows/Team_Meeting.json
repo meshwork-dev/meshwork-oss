@@ -1,0 +1,674 @@
+{
+  "name": "Team Meeting - Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ]
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "tm-trigger",
+      "name": "Meeting Message",
+      "webhookId": "",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $json.message || $json;\nconst chat = msg.chat || {};\nconst from = msg.from || {};\nconst text = (msg.text || '').trim();\n\nif (!text) return [{ json: { action: 'skip' } }];\n\nconst chatId = String(chat.id);\nconst fromName = from.first_name || from.username || 'Unknown';\nconst isGroup = chat.type === 'group' || chat.type === 'supergroup';\n\n// Only process group messages (meetings happen in groups)\n// Also process DM commands for meeting management\nconst isDm = chat.type === 'private';\n\n// Parse meeting commands\nif (text.startsWith('/meeting')) {\n  const parts = text.split(/\\s+/);\n  const subcommand = parts[1] || 'help';\n  \n  if (subcommand === 'start') {\n    // /meeting start <topic> [agent1,agent2,...]\n    const topic = parts.slice(2).join(' ') || 'Team Meeting';\n    // Extract agents if specified with @\n    const mentionedAgents = [];\n    const agentMap = {\n      'pm': 'product-manager',\n      'planner': 'engineer-planner',\n      'implementer': 'engineer-implementer',\n      'reviewer': 'engineer-reviewer',\n      'architect': 'architect-jets',\n      'security': 'security-agent',\n      'qa': 'qa-agent',\n      'ux': 'ux-agent',\n      'ba': 'ba-agent',\n      'marketing': 'marketing',\n      'sales': 'sales-development',\n      'tom': 'ask-tom-agent',\n    };\n    for (const part of parts) {\n      if (part.startsWith('@')) {\n        const name = part.slice(1).toLowerCase();\n        if (agentMap[name]) mentionedAgents.push(agentMap[name]);\n        else mentionedAgents.push(name);\n      }\n    }\n    // Clean topic: remove @mentions\n    const cleanTopic = parts.slice(2).filter(p => !p.startsWith('@')).join(' ') || 'Team Meeting';\n    \n    return [{ json: {\n      action: 'start',\n      topic: cleanTopic,\n      agents: mentionedAgents.length > 0 ? mentionedAgents : ['product-manager', 'engineer-planner', 'architect-jets'],\n      chatId,\n      fromName,\n      messageId: String(msg.message_id)\n    }}];\n  }\n  \n  if (subcommand === 'end') {\n    return [{ json: { action: 'end', chatId, fromName } }];\n  }\n  \n  if (subcommand === 'status') {\n    return [{ json: { action: 'status', chatId, fromName } }];\n  }\n  \n  if (subcommand === 'invite') {\n    const agentName = parts[2] || '';\n    return [{ json: { action: 'invite', agent: agentName, chatId, fromName } }];\n  }\n  \n  // Help\n  return [{ json: { action: 'help', chatId, fromName } }];\n}\n\n// Regular message in a meeting group — route to active meeting\nif (text.startsWith('/')) return [{ json: { action: 'skip' } }];\n\n// Check if addressing a specific agent with @\nlet targetAgent = null;\nconst atMatch = text.match(/^@(\\w+)/);\nif (atMatch) {\n  const agentMap = {\n    'pm': 'product-manager',\n    'planner': 'engineer-planner',\n    'implementer': 'engineer-implementer',\n    'reviewer': 'engineer-reviewer',\n    'architect': 'architect-jets',\n    'security': 'security-agent',\n    'qa': 'qa-agent',\n    'ux': 'ux-agent',\n    'ba': 'ba-agent',\n    'marketing': 'marketing',\n    'sales': 'sales-development',\n    'tom': 'ask-tom-agent',\n  };\n  const name = atMatch[1].toLowerCase();\n  targetAgent = agentMap[name] || name;\n}\n\nreturn [{ json: {\n  action: 'message',\n  text: text.replace(/^@\\w+\\s*/, ''),\n  targetAgent,\n  chatId,\n  fromName,\n  messageId: String(msg.message_id)\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "tm-parse",
+      "name": "Parse Meeting Command"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputIndex": 0,
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "outputIndex": 1,
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "message",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "outputIndex": 2,
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "end",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "outputIndex": 3,
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "help",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "outputIndex": 3,
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "status",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "tm-switch",
+      "name": "Route Action"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/meeting",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ topic: $json.topic, agents: $json.agents, mode: 'chair', chair: $json.agents[0], telegram: { chatId: $json.chatId }, callbackUrl: '{{N8N_PUBLIC_URL}}/webhook/meeting/callback' }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        700,
+        -200
+      ],
+      "id": "tm-create",
+      "name": "Create Meeting",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $json;\nconst chatId = $node['Parse Meeting Command'].json.chatId;\n\nlet text;\nif (result.ok) {\n  const agents = result.agents.map(a => a.replace(/-/g, ' ')).join(', ');\n  text = `*Meeting Started*\\n\\nTopic: ${result.topic}\\nAgents: ${agents}\\n\\nSend messages in this group to discuss. Use @agent to address a specific agent.\\n\\nCommands:\\n/meeting end - End meeting and get summary\\n/meeting status - Check meeting state`;\n  \n  // Store meeting ID for this chat\n  $execution.customData.set('meetingId_' + chatId, result.meetingId);\n} else {\n  text = 'Failed to start meeting: ' + (result.error || 'unknown error');\n}\n\nreturn [{ json: { chatId, text } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        -200
+      ],
+      "id": "tm-started",
+      "name": "Format Start Response"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1140,
+        -200
+      ],
+      "id": "tm-send-start",
+      "name": "Send Start Confirmation",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find active meeting for this chat\nconst chatId = $json.chatId;\nconst message = $json.text;\nconst fromName = $json.fromName;\nconst targetAgent = $json.targetAgent;\n\n// Get meetings from runner\nreturn [{ json: { chatId, message, fromName, targetAgent } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        0
+      ],
+      "id": "tm-prep-msg",
+      "name": "Prepare Message"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "{{RUNNER_INTERNAL_URL}}/api/meetings",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        920,
+        0
+      ],
+      "id": "tm-get-meetings",
+      "name": "Get Active Meetings",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const meetingsData = $json;\nconst chatId = $node['Prepare Message'].json.chatId;\nconst message = $node['Prepare Message'].json.message;\nconst fromName = $node['Prepare Message'].json.fromName;\nconst targetAgent = $node['Prepare Message'].json.targetAgent;\n\n// Find active meeting for this chat\nconst activeMeeting = (meetingsData.meetings || []).find(\n  m => m.status === 'active' && m.telegram?.chatId === chatId\n) || (meetingsData.meetings || []).find(\n  m => m.status === 'active'\n);\n\nif (!activeMeeting) {\n  return [{ json: { skip: true, chatId, text: 'No active meeting. Start one with /meeting start <topic>' } }];\n}\n\nconst body = {\n  message,\n  from: fromName,\n};\n\nif (targetAgent) {\n  body.agent = targetAgent;\n}\n\nreturn [{ json: {\n  skip: false,\n  meetingId: activeMeeting.meetingId,\n  chatId,\n  body\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        0
+      ],
+      "id": "tm-find-meeting",
+      "name": "Find Active Meeting"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ $json.skip !== true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1360,
+        0
+      ],
+      "id": "tm-has-meeting",
+      "name": "Has Active Meeting?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{RUNNER_INTERNAL_URL}}/meeting/{{ $json.meetingId }}/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1580,
+        -80
+      ],
+      "id": "tm-send-msg",
+      "name": "Send to Meeting",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Find Active Meeting'].json.chatId }}",
+        "text": "={{ $node['Find Active Meeting'].json.text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1580,
+        120
+      ],
+      "id": "tm-no-meeting",
+      "name": "No Meeting Reply",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const chatId = $json.chatId;\nconst action = $json.action;\n\nif (action === 'help') {\n  return [{ json: { chatId, text: '*Meeting Commands*\\n\\n/meeting start <topic> @agent1 @agent2 - Start a meeting\\n/meeting end - End meeting & get summary\\n/meeting status - Check meeting state\\n\\n@pm / @planner / @architect / @reviewer / @security / @qa / @ux / @ba / @marketing / @sales / @tom / @implementer - Address a specific agent\\n\\nJust type normally to have all agents discuss.' }}];\n}\n\nif (action === 'status') {\n  return [{ json: { chatId, text: '_Checking meeting status..._', checkStatus: true } }];\n}\n\nreturn [{ json: { chatId, text: 'Unknown command. Try /meeting help' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        200
+      ],
+      "id": "tm-help",
+      "name": "Help / Status"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        920,
+        200
+      ],
+      "id": "tm-send-help",
+      "name": "Send Help",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const chatId = $json.chatId;\nreturn [{ json: { chatId, meetingAction: 'end' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        -400
+      ],
+      "id": "tm-prep-end",
+      "name": "Prepare End"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "{{RUNNER_INTERNAL_URL}}/api/meetings",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        920,
+        -400
+      ],
+      "id": "tm-get-for-end",
+      "name": "Get Meetings for End",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const chatId = $node['Prepare End'].json.chatId;\nconst meetings = $json.meetings || [];\nconst active = meetings.find(m => m.status === 'active');\n\nif (!active) {\n  return [{ json: { skip: true, chatId, text: 'No active meeting to end.' } }];\n}\n\nreturn [{ json: { skip: false, meetingId: active.meetingId, chatId } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        -400
+      ],
+      "id": "tm-find-for-end",
+      "name": "Find Meeting to End"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{RUNNER_INTERNAL_URL}}/meeting/{{ $json.meetingId }}/end",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1360,
+        -400
+      ],
+      "id": "tm-end-meeting",
+      "name": "End Meeting",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $json;\nconst chatId = $node['Find Meeting to End'].json.chatId;\n\nlet text;\nif (result.ok) {\n  text = `*Meeting Ended*\\n\\n${result.summary || 'No summary generated.'}\\n\\n_${result.messageCount} messages total_`;\n} else {\n  text = 'Failed to end meeting: ' + (result.error || 'unknown');\n}\n\n// Truncate for Telegram\nif (text.length > 4000) text = text.substring(0, 3990) + '...';\n\nreturn [{ json: { chatId, text } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        -400
+      ],
+      "id": "tm-format-end",
+      "name": "Format End Summary"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1800,
+        -400
+      ],
+      "id": "tm-send-end",
+      "name": "Send End Summary",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Meeting Message": {
+      "main": [
+        [
+          {
+            "node": "Parse Meeting Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Meeting Command": {
+      "main": [
+        [
+          {
+            "node": "Route Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Action": {
+      "main": [
+        [
+          {
+            "node": "Create Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare End",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Help / Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Meeting": {
+      "main": [
+        [
+          {
+            "node": "Format Start Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Start Response": {
+      "main": [
+        [
+          {
+            "node": "Send Start Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Message": {
+      "main": [
+        [
+          {
+            "node": "Get Active Meetings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Meetings": {
+      "main": [
+        [
+          {
+            "node": "Find Active Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Active Meeting": {
+      "main": [
+        [
+          {
+            "node": "Has Active Meeting?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Active Meeting?": {
+      "main": [
+        [
+          {
+            "node": "Send to Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Meeting Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Help / Status": {
+      "main": [
+        [
+          {
+            "node": "Send Help",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare End": {
+      "main": [
+        [
+          {
+            "node": "Get Meetings for End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Meetings for End": {
+      "main": [
+        [
+          {
+            "node": "Find Meeting to End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Meeting to End": {
+      "main": [
+        [
+          {
+            "node": "End Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "End Meeting": {
+      "main": [
+        [
+          {
+            "node": "Format End Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format End Summary": {
+      "main": [
+        [
+          {
+            "node": "Send End Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,1290 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "bearerAuth",
+        "path": "jira-mcp"
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2,
+      "position": [
+        2608,
+        1440
+      ],
+      "id": "3c60a7a3-90eb-4a6c-a8af-7a98faed7ad6",
+      "name": "MCP Server Trigger",
+      "webhookId": "",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "transitions",
+        "issueKey": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Issue_Key', ``, 'string') }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.jiraTool",
+      "typeVersion": 1,
+      "position": [
+        2464,
+        1664
+      ],
+      "id": "b48823c3-795d-462a-b659-ef1c5405516b",
+      "name": "Get the status of an issue in Jira Software",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "issueKey": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Issue_Key', ``, 'string') }}",
+        "updateFields": {
+          "description": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Description', ``, 'string') }}",
+          "labels": "={{ JSON.parse($fromAI('Labels', `IMPORTANT: To add labels without removing existing ones, first call Get an issue in Jira Software to retrieve current labels, then pass ALL labels here (existing + new) as a JSON array string like [\"label1\", \"label2\"]. This field REPLACES all labels.`, 'string')) }}",
+          "parentIssueKey": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Parent_Issue_Key', `Use this to link to a parent.`, 'string') }}",
+          "statusId": {
+            "__rl": true,
+            "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Status', `you need to retrieve the valid status id's first. you should pass the id as a string`, 'string') }}",
+            "mode": "id"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.jiraTool",
+      "typeVersion": 1,
+      "position": [
+        2640,
+        1664
+      ],
+      "id": "23daf2b8-aad7-4877-a8de-56b180aea4b8",
+      "name": "Update an issue in Jira Software",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "issueKey": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Issue_Key', ``, 'string') }}",
+        "updateFields": {
+          "labels": "={{ JSON.parse($fromAI('Labels', `IMPORTANT: To add labels without removing existing ones, first call Get an issue in Jira Software to retrieve current labels, then pass ALL labels here (existing + new) as a JSON array string like [\"label1\", \"label2\"]. This field REPLACES all labels.`, 'string')) }}"
+        }
+      },
+      "type": "n8n-nodes-base.jiraTool",
+      "typeVersion": 1,
+      "position": [
+        2544,
+        1856
+      ],
+      "id": "17ac6862-7a6b-45b8-81db-71f18f5eeb0c",
+      "name": "Set labels on Jira issue",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "issueComment",
+        "issueKey": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Issue_Key', ``, 'string') }}",
+        "comment": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Comment', ``, 'string') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.jiraTool",
+      "typeVersion": 1,
+      "position": [
+        2816,
+        1664
+      ],
+      "id": "56a3e6df-bf62-4543-a7cb-861195195874",
+      "name": "Add a comment in Jira Software",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "issueComment",
+        "operation": "getAll",
+        "issueKey": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Issue_Key', ``, 'string') }}",
+        "returnAll": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Return_All', ``, 'boolean') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.jiraTool",
+      "typeVersion": 1,
+      "position": [
+        2976,
+        1664
+      ],
+      "id": "62b08e80-6ee9-487a-a4b1-3c31829e52c7",
+      "name": "Get many comments in Jira Software",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "issueComment",
+        "operation": "get",
+        "issueKey": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Issue_Key', ``, 'string') }}",
+        "commentId": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Comment_ID', ``, 'string') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.jiraTool",
+      "typeVersion": 1,
+      "position": [
+        2736,
+        1888
+      ],
+      "id": "cf7cd87e-45d1-4f13-bd26-58806f263326",
+      "name": "Get a comment in Jira Software",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "issueKey": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Issue_Key', ``, 'string') }}",
+        "simplifyOutput": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Simplify', ``, 'boolean') }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.jiraTool",
+      "typeVersion": 1,
+      "position": [
+        3200,
+        1632
+      ],
+      "id": "0c18958b-68de-4e8d-8b8d-da3cbaed0d9c",
+      "name": "Get an issue in Jira Software",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Return_All', ``, 'boolean') }}",
+        "options": {
+          "fields": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Fields', ``, 'string') }}",
+          "fieldsByKey": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Fields_By_Key', ``, 'boolean') }}",
+          "jql": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('JQL', `You can use JQL to query.`, 'string') }}"
+        }
+      },
+      "type": "n8n-nodes-base.jiraTool",
+      "typeVersion": 1,
+      "position": [
+        2112,
+        1664
+      ],
+      "id": "5032d8a4-076b-4991-bf06-37c258556faa",
+      "name": "Get many issues in Jira Software",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://{{JIRA_HOST}}/rest/api/3/issue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { project: { key: $fromAI('Project_Key', 'Jira project key (e.g. CER, EOS, WMS)', 'string') }, summary: $fromAI('Summary', 'Bug summary/title', 'string'), description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: $fromAI('Description', 'Bug description', 'string') }] }] }, issuetype: { name: 'Bug' }, labels: JSON.parse($fromAI('Labels', 'JSON array of labels (e.g. [\"agent:planner\"]). Use [] for no labels.', 'string') || '[]'), priority: { name: $fromAI('Priority', 'Priority: Highest, High, Medium, Low, Lowest', 'string') || 'Medium' } } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2432,
+        1920
+      ],
+      "id": "34ec604a-101d-4655-86f3-573f8e5f3947",
+      "name": "Create a bug in Jira",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://{{JIRA_HOST}}/rest/api/3/issue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { project: { key: $fromAI('Project_Key', 'Jira project key (e.g. CER, EOS, WMS)', 'string') }, summary: $fromAI('Summary', 'Epic summary/title', 'string'), description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: $fromAI('Description', 'Epic description', 'string') }] }] }, issuetype: { name: 'Epic' }, labels: JSON.parse($fromAI('Labels', 'JSON array of labels (e.g. [\"agent:planner\"]). Use [] for no labels.', 'string') || '[]'), priority: { name: $fromAI('Priority', 'Priority: Highest, High, Medium, Low, Lowest', 'string') || 'Medium' } } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2576,
+        2064
+      ],
+      "id": "44af7a7e-f5ef-4b7e-b49e-b20f5cf52b1b",
+      "name": "Create an epic in Jira",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/content/' + $fromAI('Page_ID', `The Confluence page ID`, 'string') + '?expand=body.storage,version' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2896,
+        2064
+      ],
+      "id": "940edbba-700f-44d7-a83a-e31350b27541",
+      "name": "Get Confluence page by ID",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/content?title=' + encodeURIComponent($fromAI('Page_Title', `The exact title of the Confluence page to find`, 'string')) + '&spaceKey=' + $fromAI('Space_Key', `The Confluence space key (e.g., DOCS, KB)`, 'string') + '&expand=body.storage,version' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        3056,
+        2064
+      ],
+      "id": "285d2a07-efc5-495a-9e17-93388a87add8",
+      "name": "Get Confluence page by title",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/content/search?cql=' + encodeURIComponent($fromAI('CQL_Query', `Confluence Query Language query. Examples: text~\"search term\", space=DOCS, label=important, type=page`, 'string')) + '&limit=' + ($fromAI('Limit', `Max results to return (default 25)`, 'string') || '25') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        3216,
+        2064
+      ],
+      "id": "10220b6b-acdc-4d10-a679-da6b6c14c4c6",
+      "name": "Search Confluence pages",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://{{JIRA_HOST}}/wiki/rest/api/content",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ type: 'page', title: $fromAI('Page_Title', `Title for the new page`, 'string'), space: { key: $fromAI('Space_Key', `The Confluence space key (e.g., DOCS, KB)`, 'string') }, body: { storage: { value: $fromAI('Page_Content', `HTML content for the page body`, 'string'), representation: 'storage' } } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2896,
+        2224
+      ],
+      "id": "aabb7620-5841-4104-b227-ec2fd088a4d4",
+      "name": "Create Confluence page",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/content/' + $fromAI('Page_ID', `The Confluence page ID to update`, 'string') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ type: 'page', title: $fromAI('Page_Title', `Updated title for the page`, 'string'), body: { storage: { value: $fromAI('Page_Content', `Updated HTML content for the page body`, 'string'), representation: 'storage' } }, version: { number: parseInt($fromAI('Version_Number', `REQUIRED: Current version number + 1. First get the page to find current version.`, 'string')) } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        3056,
+        2224
+      ],
+      "id": "69773747-e942-49eb-9e1b-8e65fe598cb5",
+      "name": "Update Confluence page",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/content/' + $fromAI('Page_ID', `The Confluence page ID to delete`, 'string') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        3216,
+        2224
+      ],
+      "id": "69704797-3e2f-48e3-8960-7aad29f07a1e",
+      "name": "Delete Confluence page",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/space/' + $fromAI('Space_Key', `The Confluence space key (e.g., DOCS, KB)`, 'string') + '?expand=description.plain,homepage' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2896,
+        2384
+      ],
+      "id": "1cce3a90-221b-4820-b535-73691e8a87b3",
+      "name": "Get Confluence space info",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/space?limit=' + ($fromAI('Limit', `Max spaces to return (default 25)`, 'string') || '25') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        3056,
+        2384
+      ],
+      "id": "97b7ab9c-b58a-4362-82b8-d3b3c374875b",
+      "name": "List Confluence spaces",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/content/' + $fromAI('Page_ID', `The Confluence page ID to comment on`, 'string') + '/child/comment' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ type: 'comment', body: { storage: { value: $fromAI('Comment_Content', `HTML content for the comment`, 'string'), representation: 'storage' } } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        3216,
+        2384
+      ],
+      "id": "e15f93f3-e201-4cc7-a50c-830cba480c85",
+      "name": "Add comment to Confluence page",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/content/' + $fromAI('Page_ID', `The Confluence page ID`, 'string') + '/child/comment?expand=body.storage&limit=' + ($fromAI('Limit', `Max comments to return (default 25)`, 'string') || '25') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        3376,
+        2384
+      ],
+      "id": "9e3d23bd-9294-47d1-8e54-64c4bee86896",
+      "name": "Get Confluence page comments",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "project": {
+          "__rl": true,
+          "value": "10034",
+          "mode": "list",
+          "cachedResultName": "CertPilot-PDM"
+        },
+        "issueType": {
+          "__rl": true,
+          "value": "10043",
+          "mode": "list",
+          "cachedResultName": "Idea"
+        },
+        "summary": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Summary', ``, 'string') }}",
+        "additionalFields": {
+          "description": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Description', ``, 'string') }}"
+        }
+      },
+      "type": "n8n-nodes-base.jiraTool",
+      "typeVersion": 1,
+      "position": [
+        3408,
+        1760
+      ],
+      "id": "91e66bd9-5e52-4f07-a6bb-9726ac55f2e4",
+      "name": "Create an Idea in CertPilot-PDM (CP)",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "notes": "Use this to create ideas in the certpilot-pdm space"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://{{JIRA_HOST}}/rest/api/3/issue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { project: { key: $fromAI('Project_Key', 'Jira project key (e.g. CER, EOS, WMS)', 'string') }, summary: $fromAI('Summary', 'Story summary/title', 'string'), description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: $fromAI('Description', 'Story description', 'string') }] }] }, issuetype: { name: 'Story' }, labels: JSON.parse($fromAI('Labels', 'JSON array of labels (e.g. [\"agent:planner\"]). Use [] for no labels.', 'string') || '[]'), priority: { name: $fromAI('Priority', 'Priority: Highest, High, Medium, Low, Lowest', 'string') || 'Medium' } } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2336,
+        1648
+      ],
+      "id": "989961d8-823e-428c-8791-2c646a980bac",
+      "name": "Create a story in Jira",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/api/3/issue' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { project: { key: $fromAI('Project_Key', `Project key (e.g., CER)`, 'string') }, parent: { key: $fromAI('Parent_Issue_Key', `Parent issue key (e.g., CER-123)`, 'string') }, summary: $fromAI('Summary', `Subtask summary`, 'string'), description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: $fromAI('Description', `Subtask description`, 'string') }] }] }, issuetype: { name: 'Subtask' }, labels: JSON.parse($fromAI('Labels', `JSON array of labels (e.g., [\"agent:implementer\"])`, 'string') || '[]') } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2112,
+        2064
+      ],
+      "id": "subtask-create-01",
+      "name": "Create Subtask in Jira",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/api/3/issueLink' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ type: { name: $fromAI('Link_Type', `Link type name: \"Blocks\" for blocks/is-blocked-by, \"Relates\" for relates-to`, 'string') }, inwardIssue: { key: $fromAI('Inward_Issue_Key', `The issue that IS BLOCKED BY the outward issue (e.g., CER-124)`, 'string') }, outwardIssue: { key: $fromAI('Outward_Issue_Key', `The issue that BLOCKS the inward issue (e.g., CER-123)`, 'string') } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2272,
+        2064
+      ],
+      "id": "issuelink-create-01",
+      "name": "Add Issue Link in Jira",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/api/3/issue/' + $fromAI('Parent_Issue_Key', `Parent issue key (e.g., CER-123)`, 'string') + '?fields=subtasks' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2432,
+        2064
+      ],
+      "id": "subtasks-get-01",
+      "name": "Get Subtasks of Issue",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/api/3/issue/' + $fromAI('Issue_Key', `Issue key (e.g., CER-123)`, 'string') + '?fields=issuelinks' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2592,
+        2064
+      ],
+      "id": "issuelinks-get-01",
+      "name": "Get Issue Links",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/agile/1.0/board?projectKeyOrId=' + ($fromAI('Project_Key', `Project key to filter boards (e.g., CER, EOS). Leave empty for all boards.`, 'string') || '') + '&maxResults=' + ($fromAI('Max_Results', `Max boards to return (default 50)`, 'string') || '50') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2112,
+        2400
+      ],
+      "id": "board-list-01",
+      "name": "List Boards",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/agile/1.0/board/' + $fromAI('Board_ID', `Board ID (e.g., 34, 100)`, 'string') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2272,
+        2400
+      ],
+      "id": "board-get-01",
+      "name": "Get Board",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/agile/1.0/board/' + $fromAI('Board_ID', `Board ID (e.g., 34, 100)`, 'string') + '/sprint?state=' + ($fromAI('State', `Filter by state: active, closed, future, or leave empty for all`, 'string') || '') + '&maxResults=' + ($fromAI('Max_Results', `Max sprints to return (default 50)`, 'string') || '50') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2432,
+        2400
+      ],
+      "id": "sprint-list-01",
+      "name": "List Sprints for Board",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/agile/1.0/sprint/' + $fromAI('Sprint_ID', `Sprint ID number`, 'string') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2592,
+        2400
+      ],
+      "id": "sprint-get-01",
+      "name": "Get Sprint",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://{{JIRA_HOST}}/rest/agile/1.0/sprint",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $fromAI('Sprint_Name', `Name for the new sprint`, 'string'), originBoardId: parseInt($fromAI('Board_ID', `Board ID to create sprint on`, 'string')), startDate: $fromAI('Start_Date', `ISO date string (e.g., 2026-03-14T09:00:00.000Z). Optional.`, 'string') || undefined, endDate: $fromAI('End_Date', `ISO date string. Optional.`, 'string') || undefined, goal: $fromAI('Goal', `Sprint goal. Optional.`, 'string') || undefined }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2752,
+        2400
+      ],
+      "id": "sprint-create-01",
+      "name": "Create Sprint",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/agile/1.0/sprint/' + $fromAI('Sprint_ID', `Sprint ID to update`, 'string') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.fromEntries(Object.entries({ name: $fromAI('Sprint_Name', `Updated sprint name. Pass empty string to skip.`, 'string') || undefined, state: $fromAI('State', `Sprint state: active (to start), closed (to complete), future. Pass empty to skip.`, 'string') || undefined, startDate: $fromAI('Start_Date', `ISO date. Pass empty to skip.`, 'string') || undefined, endDate: $fromAI('End_Date', `ISO date. Pass empty to skip.`, 'string') || undefined, goal: $fromAI('Goal', `Sprint goal. Pass empty to skip.`, 'string') || undefined }).filter(([_, v]) => v !== undefined))) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        2912,
+        2400
+      ],
+      "id": "sprint-update-01",
+      "name": "Update Sprint",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/agile/1.0/sprint/' + $fromAI('Sprint_ID', `Sprint ID`, 'string') + '/issue?maxResults=' + ($fromAI('Max_Results', `Max issues to return (default 50)`, 'string') || '50') + '&fields=summary,status,assignee,priority,labels,issuetype' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        3072,
+        2400
+      ],
+      "id": "sprint-issues-01",
+      "name": "Get Sprint Issues",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/agile/1.0/sprint/' + $fromAI('Sprint_ID', `Target sprint ID to move issues into`, 'string') + '/issue' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ issues: JSON.parse($fromAI('Issue_Keys', `JSON array of issue keys to move (e.g., [\"CER-1\", \"CER-2\"])`, 'string')) }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        3232,
+        2400
+      ],
+      "id": "sprint-move-issues-01",
+      "name": "Move Issues to Sprint",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/agile/1.0/board/' + $fromAI('Board_ID', `Board ID`, 'string') + '/backlog?maxResults=' + ($fromAI('Max_Results', `Max issues to return (default 50)`, 'string') || '50') + '&fields=summary,status,priority,labels,issuetype' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        3392,
+        2400
+      ],
+      "id": "board-backlog-01",
+      "name": "Get Board Backlog",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://{{JIRA_HOST}}/rest/agile/1.0/issue/rank",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ issues: JSON.parse($fromAI('Issue_Keys', `JSON array of issue keys to rank (e.g., [\"CER-5\"])`, 'string')), rankBeforeIssue: $fromAI('Rank_Before_Issue', `Issue key to rank BEFORE (e.g., CER-3). Leave empty if using rankAfterIssue.`, 'string') || undefined, rankAfterIssue: $fromAI('Rank_After_Issue', `Issue key to rank AFTER (e.g., CER-7). Leave empty if using rankBeforeIssue.`, 'string') || undefined }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        3552,
+        2400
+      ],
+      "id": "issue-rank-01",
+      "name": "Rank Issues",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Get the status of an issue in Jira Software": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update an issue in Jira Software": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set labels on Jira issue": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add a comment in Jira Software": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many comments in Jira Software": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a comment in Jira Software": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get an issue in Jira Software": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many issues in Jira Software": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a bug in Jira": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an epic in Jira": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Confluence page by ID": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Confluence page by title": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Confluence pages": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Confluence page": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Confluence page": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Confluence page": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Confluence space info": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Confluence spaces": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add comment to Confluence page": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Confluence page comments": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an Idea in CertPilot-PDM (CP)": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a story in Jira": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Subtask in Jira": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Issue Link in Jira": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Subtasks of Issue": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Issue Links": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Boards": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Board": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Sprints for Board": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Sprint": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Sprint": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Sprint": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Sprint Issues": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move Issues to Sprint": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Board Backlog": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rank Issues": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

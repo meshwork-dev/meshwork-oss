@@ -329,6 +329,9 @@ const MEETING_CAMEL_TO_SNAKE = {
   productId: "product_id",
   createdAt: "created_at",
   endedAt: "ended_at",
+  gateBeforeDispatch: "gate_before_dispatch",
+  awaitingApproval: "awaiting_approval",
+  awaitingApprovalSince: "awaiting_approval_since",
 };
 
 const MEETING_SNAKE_TO_CAMEL = {
@@ -344,6 +347,9 @@ const MEETING_SNAKE_TO_CAMEL = {
   product_id: "productId",
   created_at: "createdAt",
   ended_at: "endedAt",
+  gate_before_dispatch: "gateBeforeDispatch",
+  awaiting_approval: "awaitingApproval",
+  awaiting_approval_since: "awaitingApprovalSince",
 };
 
 const MEETING_DB_COLUMNS = new Set([
@@ -368,6 +374,9 @@ const MEETING_DB_COLUMNS = new Set([
   "max_turns",
   "turn_count",
   "summary",
+  "gate_before_dispatch",
+  "awaiting_approval",
+  "awaiting_approval_since",
 ]);
 
 const MEETING_JSONB_COLS = new Set(["transcript", "telegram"]);
@@ -821,6 +830,21 @@ const MIGRATIONS = [
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
   `CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications (read, created_at DESC)`,
+
+  // 017 — conversations (chat memory, migrated from file-based storage)
+  `CREATE TABLE IF NOT EXISTS conversations (
+    channel_id TEXT NOT NULL,
+    product_id TEXT,
+    turns JSONB NOT NULL DEFAULT '[]',
+    last_active TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (channel_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_conversations_last_active ON conversations (last_active DESC)`,
+
+  // 014 — gate-before-dispatch persistence (so flag survives runner restarts mid-meeting)
+  `ALTER TABLE meetings ADD COLUMN IF NOT EXISTS gate_before_dispatch BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE meetings ADD COLUMN IF NOT EXISTS awaiting_approval BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE meetings ADD COLUMN IF NOT EXISTS awaiting_approval_since TIMESTAMPTZ`,
 ];
 
 async function runMigrations(client) {
@@ -1779,6 +1803,80 @@ const notificationsRepo = {
 };
 
 // ---------------------------------------------------------------------------
+// conversations repository
+// ---------------------------------------------------------------------------
+
+const conversationsRepo = {
+  /**
+   * Load a conversation by channel_id.
+   * Returns an array of message objects, or an empty array if not found.
+   */
+  async load(channelId) {
+    const { rows } = await pool.query(
+      "SELECT turns FROM conversations WHERE channel_id = $1",
+      [channelId]
+    );
+    if (!rows[0]) return null; // null = not found (distinguish from empty [])
+    return rows[0].turns || [];
+  },
+
+  /**
+   * Upsert a conversation's turns array, bumping last_active.
+   */
+  async save(channelId, turns, productId) {
+    await pool.query(
+      `INSERT INTO conversations (channel_id, product_id, turns, last_active)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (channel_id) DO UPDATE SET
+         turns = $3,
+         last_active = NOW(),
+         product_id = COALESCE($2, conversations.product_id)`,
+      [channelId, norm(productId), JSON.stringify(turns)]
+    );
+  },
+
+  /**
+   * Delete a conversation.
+   */
+  async delete(channelId) {
+    await pool.query("DELETE FROM conversations WHERE channel_id = $1", [channelId]);
+  },
+
+  /**
+   * List all conversations (summary only, no turns payload).
+   */
+  async listAll() {
+    const { rows } = await pool.query(
+      `SELECT channel_id, product_id, jsonb_array_length(turns) AS message_count, last_active
+       FROM conversations
+       ORDER BY last_active DESC`
+    );
+    return rows.map((r) => ({
+      channelId: r.channel_id,
+      productId: r.product_id,
+      messageCount: parseInt(r.message_count, 10) || 0,
+      lastActive: r.last_active,
+    }));
+  },
+
+  /**
+   * Delete conversations that have not been active since `cutoffDate`.
+   */
+  async pruneStale(cutoffDate) {
+    const { rowCount } = await pool.query(
+      "DELETE FROM conversations WHERE last_active < $1",
+      [cutoffDate.toISOString()]
+    );
+    return rowCount;
+  },
+
+  async count() {
+    const { rows } = await pool.query("SELECT COUNT(*) FROM conversations");
+    return parseInt(rows[0].count, 10);
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -1801,6 +1899,7 @@ module.exports = {
   issueLinks: issueLinksRepo,
   issueTransitions: issueTransitionsRepo,
   notifications: notificationsRepo,
+  conversations: conversationsRepo,
   // Exposed for testing / advanced use
   _helpers: { camelToSnake, snakeToCamel, jobToRow, rowToJob, pipelineToRow, rowToPipeline },
 };

@@ -1,0 +1,971 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "runner/callback",
+        "authentication": "headerAuth",
+        "options": {
+          "responseData": "={ \"ok\": true }"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "38d1bbb7-30b0-4ee8-983c-c97c2d9326ae",
+      "name": "Webhook",
+      "webhookId": "",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize callback payload\nconst body = $json.body || $json;\nconst result = body.parsedOutput?.result || \"\";\n\n// Agent label mapping for subtasks\nconst agentLabelMap = {\n  'planner': 'engineer-planner',\n  'implementer': 'engineer-implementer',\n  'reviewer': 'engineer-reviewer',\n  'pm': 'product-manager',\n  'ui': 'ui-engineer',\n  'marketing': 'marketing',\n  'creative-assets': 'creative-assets',\n  'bug-triage': 'bug-triage',\n  'security': 'security-agent',\n  'sprint-report': 'sprint-reporter',\n  'standup': 'sprint-reporter'\n};\n\nlet subtasks = [];\nlet legacyActions = [];\n\n// Parse [CREATE-SUBTASKS parent=XXX] blocks (NEW format)\nconst subtaskMatches = result.matchAll(/\\[CREATE-SUBTASKS\\s+parent=([^\\]]+)\\]([\\s\\S]*?)\\[\\/CREATE-SUBTASKS\\]/g);\nfor (const match of subtaskMatches) {\n  const parentKey = match[1].trim();\n  const subtasksBlock = match[2];\n  \n  // Parse YAML-like subtask list\n  const itemMatches = subtasksBlock.matchAll(/- summary:\\s*(.+?)(?:\\n|$)([\\s\\S]*?)(?=\\n- summary:|$)/g);\n  let index = 1;\n  for (const item of itemMatches) {\n    const summary = item[1].trim();\n    const details = item[2] || '';\n    \n    // Extract fields\n    const agentMatch = details.match(/agent:\\s*(\\S+)/);\n    const blockedByMatch = details.match(/blockedBy:\\s*\\[([^\\]]+)\\]/);\n    const descMatch = details.match(/description:\\s*\\|?\\s*\\n([\\s\\S]*?)(?=\\n\\s*\\w+:|$)/) || details.match(/description:\\s*([^\\n]+)/);\n    const filesMatch = details.match(/files:\\s*\\[([^\\]]+)\\]/);\n    const priorityMatch = details.match(/priority:\\s*(\\S+)/);\n    const labelsMatch = details.match(/labels:\\s*\\[([^\\]]+)\\]/);\n    \n    const agent = agentMatch ? agentMatch[1] : 'implementer';\n    const blockedBy = blockedByMatch ? blockedByMatch[1].split(',').map(s => s.trim()) : [];\n    const description = descMatch ? descMatch[1].trim() : '';\n    const files = filesMatch ? filesMatch[1].split(',').map(s => s.trim().replace(/[\"']/g, '')) : [];\n    const priority = priorityMatch ? priorityMatch[1] : 'medium';\n    const extraLabels = labelsMatch ? labelsMatch[1].split(',').map(s => s.trim().replace(/[\"']/g, '')) : [];\n    \n    subtasks.push({\n      localIndex: index,\n      parentKey,\n      summary,\n      agent: agentLabelMap[agent] || agent,\n      agentLabel: `agent:${agent}`,\n      blockedBy,\n      description,\n      files,\n      priority,\n      extraLabels\n    });\n    index++;\n  }\n}\n\n// Parse legacy [DISPATCH-ACTIONS] block (for backwards compatibility)\nconst dispatchMatch = result.match(/\\[DISPATCH-ACTIONS\\]([\\s\\S]*?)\\[\\/DISPATCH-ACTIONS\\]/);\nif (dispatchMatch) {\n  const actionsBlock = dispatchMatch[1];\n  const actionMatches = actionsBlock.matchAll(/- action:\\s*(\\S+)\\s+issueKey:\\s*(\\S+)/g);\n  for (const m of actionMatches) {\n    legacyActions.push({ action: m[1], issueKey: m[2] });\n  }\n}\n\n// Phase 3.4: Post-acceptance automation\nconst hasAutoAccept = result.includes('[AUTO-ACCEPT]') && !result.includes('[AUTO-ACCEPT-REJECTED]') && !result.includes('[AUTO-ACCEPT-FAILED]');\nconst issueKey = body.issueKey;\n\n// For accepted issues, auto-add follow-up subtasks\nif (hasAutoAccept && issueKey && subtasks.length === 0) {\n  // Convert label-based triggers to subtasks\n  if (result.includes('needs-marketing') || result.includes('label: needs-marketing')) {\n    subtasks.push({\n      localIndex: subtasks.length + 1,\n      parentKey: issueKey,\n      summary: 'Create marketing content',\n      agent: 'marketing',\n      agentLabel: 'agent:marketing',\n      blockedBy: [],\n      description: 'Create marketing content for new feature',\n      files: [],\n      priority: 'medium'\n    });\n  }\n  // Create PR after acceptance (implementer now handles PR creation)\n  subtasks.push({\n    localIndex: subtasks.length + 1,\n    parentKey: issueKey,\n    summary: 'Create pull request',\n    agent: 'engineer-implementer',\n    agentLabel: 'agent:implementer',\n    blockedBy: [],\n    description: 'Create pull request for accepted implementation',\n    files: [],\n    priority: 'high'\n  });\n  // Release notes handled directly by PM (no separate agent needed)\n}\n\n// Combine: subtasks take priority, fall back to legacy actions\nconst hasSubtasks = subtasks.length > 0;\nconst hasLegacyActions = legacyActions.length > 0;\n\nreturn [{\n  json: {\n    ok: true,\n    jobId: body.jobId,\n    status: body.status,\n    agent: body.agent,\n    issueKey: body.issueKey,\n    error: body.error,\n    parsedOutput: body.parsedOutput,\n    logUrl: body.logUrl,\n    telegram: body.telegram || body.gchat || body.slack || null,\n    finishedAt: body.finishedAt,\n    batchId: body.batchId || null,\n    workingDir: body.workingDir || (() => { const PD = { CER: '{{DEFAULT_WORKING_DIR}}', EOS: '{{DEFAULT_WORKING_DIR}}', WMS: '{{DEFAULT_WORKING_DIR}}' }; return PD[(body.issueKey || '').split('-')[0]] || null; })(),\n    // New subtask-based dispatch\n    subtasks: subtasks,\n    hasSubtasks: hasSubtasks,\n    // Legacy action-based dispatch (for backwards compatibility)\n    dispatchActions: legacyActions,\n    hasDispatchActions: hasLegacyActions && !hasSubtasks,\n    hasAutoAccept: hasAutoAccept,\n    event: body.event || 'completed',\n    meetingAction: body.meetingAction || null,\n    source: body.source || null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "0888dc47-087c-4913-959e-597ef081cc46",
+      "name": "Normalize callback"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "batch-check",
+              "leftValue": "={{ !!$json.batchId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        416,
+        0
+      ],
+      "id": "check-batch-job",
+      "name": "Is batch job?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{RUNNER_INTERNAL_URL}}/batches/{{ $json.batchId }}/complete",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"jobId\": \"{{ $json.jobId }}\",\n  \"status\": \"{{ $json.status }}\",\n  \"issueKey\": \"{{ $json.issueKey }}\",\n  \"result\": {{ JSON.stringify($json.parsedOutput?.result || \"\") }},\n  \"error\": {{ JSON.stringify($json.error || null) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        624,
+        -96
+      ],
+      "id": "update-batch-state",
+      "name": "Update batch state",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "batch-complete-check",
+              "leftValue": "={{ $json.isComplete }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        832,
+        -96
+      ],
+      "id": "check-batch-complete",
+      "name": "Batch complete?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const batch = $json.batch;\nconst results = batch.results || [];\n\n// Build summary lines\nconst lines = results.map(r => {\n  const icon = (r.status === 'succeeded' || r.status === 'completed') ? '\\u2705' : '\\u274C';\n  const key = r.issueKey || 'unknown';\n  let text = r.result ? String(r.result).slice(0, 150) : (r.error || 'No result');\n  // Clean up text\n  text = text.replace(/\\n/g, ' ').trim();\n  if (text.length > 150) text = text.slice(0, 147) + '...';\n  return `${icon} *${key}*: ${text}`;\n});\n\nconst successCount = batch.completed || 0;\nconst failCount = batch.failed || 0;\nconst total = batch.total || 0;\n\nconst header = `*Batch Complete* (${successCount}/${total} succeeded${failCount > 0 ? `, ${failCount} failed` : ''})`;\nconst summary = header + '\\n\\n' + lines.join('\\n');\n\nreturn [{\n  json: {\n    batchId: batch.batchId,\n    telegram: batch.gchat || batch.slack,\n    summary,\n    successCount,\n    failCount,\n    total\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        -192
+      ],
+      "id": "build-batch-summary",
+      "name": "Build batch summary"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "telegram-check-batch",
+              "leftValue": "={{ !!$json.telegram?.chatId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1248,
+        -192
+      ],
+      "id": "has-gchat-batch",
+      "name": "Has Telegram context? (batch)"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram?.chatId || $env.TELEGRAM_CHAT_NOTIFICATIONS }}",
+        "text": "={{$json.summary}}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1456,
+        -288
+      ],
+      "id": "post-batch-summary",
+      "name": "Post batch summary",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "subtask-check",
+              "leftValue": "={{ $json.hasSubtasks }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        624,
+        96
+      ],
+      "id": "check-subtasks",
+      "name": "Has subtasks?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process subtasks: create in Jira with proper links\n// This iterates through subtasks and prepares Jira API calls\nconst subtasks = $json.subtasks || [];\nconst issueKey = $json.issueKey;\n\nif (subtasks.length === 0) {\n  return [{ json: { skip: true, subtasks: [] } }];\n}\n\n// Group subtasks by parent for batch processing\nconst byParent = {};\nfor (const st of subtasks) {\n  const parent = st.parentKey || issueKey;\n  if (!byParent[parent]) byParent[parent] = [];\n  byParent[parent].push(st);\n}\n\n// Output each subtask for individual creation\nreturn subtasks.map(st => ({\n  json: {\n    subtask: st,\n    parentKey: st.parentKey || issueKey,\n    allSubtasks: subtasks,\n    originalIssueKey: issueKey\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        0
+      ],
+      "id": "prepare-subtasks",
+      "name": "Prepare subtasks"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://{{JIRA_HOST}}/rest/api/3/issue",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { project: { key: $json.parentKey.split('-')[0] }, parent: { key: $json.parentKey }, summary: $json.subtask.summary, description: { type: 'doc', version: 1, content: $json.subtask.description ? [{ type: 'paragraph', content: [{ type: 'text', text: $json.subtask.description }] }] : [] }, issuetype: { name: 'Subtask' }, labels: [$json.subtask.agentLabel, ...($json.subtask.extraLabels || [])] } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "create-subtask-jira",
+      "name": "Create subtask in Jira",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// After subtask created, create blocking links if needed\nconst subtask = $json.subtask;\nconst createdKey = $('Create subtask in Jira').first().json.key;\nconst allSubtasks = $json.allSubtasks || [];\nconst blockedBy = subtask.blockedBy || [];\n\nif (!createdKey) {\n  return [{ json: { skip: true, error: 'No subtask key returned' } }];\n}\n\n// If this subtask has blockedBy references, we need to create links\n// blockedBy contains local indices like [1, 2] or issue keys like ['CER-150']\nconst linksToCreate = [];\nfor (const ref of blockedBy) {\n  // Check if it's a numeric local index or an issue key\n  const refNum = parseInt(ref, 10);\n  if (!isNaN(refNum)) {\n    // Local index - find the subtask that was created with that index\n    // Note: We'd need to track created subtasks' keys\n    // For now, we'll need to handle this in a second pass\n    linksToCreate.push({\n      type: 'local',\n      localIndex: refNum,\n      createdKey: createdKey\n    });\n  } else {\n    // Direct issue key reference\n    linksToCreate.push({\n      type: 'issueKey',\n      blockerKey: ref,\n      blockedKey: createdKey\n    });\n  }\n}\n\nreturn [{\n  json: {\n    createdKey,\n    subtask,\n    localIndex: subtask.localIndex,\n    linksToCreate,\n    allSubtasks\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        0
+      ],
+      "id": "process-subtask-created",
+      "name": "Process created subtask"
+    },
+    {
+      "parameters": {
+        "jsCode": "// After all subtasks created, trigger unblocked ones\n// A subtask is unblocked if it has no blockedBy or all blockers have been resolved\nconst allItems = $input.all();\nconst createdSubtasks = [];\n\n// Build mapping of localIndex -> createdKey\nconst indexToKey = {};\nfor (const item of allItems) {\n  const data = item.json;\n  if (data.createdKey && data.localIndex) {\n    indexToKey[data.localIndex] = data.createdKey;\n    createdSubtasks.push({\n      key: data.createdKey,\n      subtask: data.subtask,\n      localIndex: data.localIndex\n    });\n  }\n}\n\n// Find subtasks that are unblocked (no blockers or all blockers are newly created)\nconst unblockedSubtasks = [];\nfor (const st of createdSubtasks) {\n  const blockedBy = st.subtask.blockedBy || [];\n  if (blockedBy.length === 0) {\n    // No blockers - immediately trigger\n    unblockedSubtasks.push(st);\n  }\n  // Subtasks with blockers will wait for those blockers to complete\n  // The Subtask_Webhook_Listener will handle triggering them\n}\n\n// Return unblocked subtasks for immediate dispatch\nif (unblockedSubtasks.length === 0) {\n  return [{ json: { noUnblockedSubtasks: true, total: createdSubtasks.length } }];\n}\n\nreturn unblockedSubtasks.map(st => ({\n  json: {\n    issueKey: st.key,\n    agent: st.subtask.agent,\n    summary: st.subtask.summary,\n    description: st.subtask.description,\n    files: st.subtask.files || [],\n    parentKey: st.subtask.parentKey\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        0
+      ],
+      "id": "find-unblocked-subtasks",
+      "name": "Find unblocked subtasks"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"{{ $json.agent }}\",\n  \"issueKey\": \"{{ $json.issueKey }}\",\n  \"summary\": {{ JSON.stringify($json.summary) }},\n  \"description\": {{ JSON.stringify($json.description || '') }},\n  \"workingDir\": \"{{ $('Normalize callback').first().json.workingDir }}\",\n  \"callbackUrl\": \"{{N8N_PUBLIC_URL}}/webhook/runner/callback\",\n  \"subtaskFiles\": {{ JSON.stringify($json.files || []) }},\n  \"parentKey\": {{ JSON.stringify($json.parentKey || null) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1664,
+        0
+      ],
+      "id": "trigger-unblocked-subtask",
+      "name": "Trigger unblocked subtask",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "dispatch-check",
+              "leftValue": "={{ $json.hasDispatchActions }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        624,
+        288
+      ],
+      "id": "check-dispatch-actions",
+      "name": "Has dispatch actions?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate batch ID for tracking dispatched jobs\nconst actions = $json.dispatchActions || [];\nconst gchat = $json.telegram;\n\nif (actions.length === 0) {\n  return [{ json: { skip: true } }];\n}\n\n// Generate a unique batch ID\nconst batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;\n\nreturn [{\n  json: {\n    batchId,\n    total: actions.length,\n    gchat,\n    actions\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        192
+      ],
+      "id": "prepare-batch-create",
+      "name": "Prepare batch creation"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/batches",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"total\": {{ $json.total }},\n  \"gchat\": {{ JSON.stringify($json.gchat) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1040,
+        192
+      ],
+      "id": "create-batch",
+      "name": "Create batch",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Map actions to runner jobs with batch ID\nconst actionMap = {\n  'acceptance-review': 'product-manager',\n  'code-review': 'engineer-reviewer',\n  'implement': 'engineer-implementer',\n  'plan': 'engineer-planner',\n  'marketing': 'marketing',\n  'create-pr': 'engineer-implementer',\n  'bug-triage': 'bug-triage',\n  'security-scan': 'security-agent',\n  'release-notes': 'product-manager',\n  'sprint-report': 'sprint-reporter',\n  'standup': 'sprint-reporter'\n};\n\nconst batchId = $json.batchId;\nconst actions = $('Prepare batch creation').first().json.actions || [];\nconst gchat = $('Prepare batch creation').first().json.gchat;\n\nreturn actions.map(a => ({\n  json: {\n    job: {\n      agent: actionMap[a.action] || a.action,\n      issueKey: a.issueKey,\n      workingDir: $('Normalize callback').first().json.workingDir,\n      callbackUrl: \"{{N8N_PUBLIC_URL}}/webhook/runner/callback\",\n      batchId: batchId,\n      telegram: null // Don't post individual results, wait for batch summary\n    },\n    originalAction: a\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        192
+      ],
+      "id": "build-dispatch-jobs",
+      "name": "Build dispatch jobs"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.job}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1456,
+        192
+      ],
+      "id": "dispatch-to-runner",
+      "name": "Dispatch to runner",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "6e6a4884-d8f4-42c1-90f0-5b5ec9f2ffc6",
+              "leftValue": "={{ !!$json.telegram?.chatId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        832,
+        480
+      ],
+      "id": "ffab7a87-ea19-4273-a20b-a1df441f53ad",
+      "name": "Has Telegram context? (no dispatch)"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram?.chatId || $env.TELEGRAM_CHAT_NOTIFICATIONS }}",
+        "text": "={{ ($json.parsedOutput?.result || $json.error || ('Job ' + $json.jobId + ' finished with status ' + $json.status)).substring(0, 4000) }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1040,
+        480
+      ],
+      "id": "589afddf-3126-4748-a185-6f2e7396666e",
+      "name": "Post reply (no dispatch)",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Post agent result as Jira comment for one-shot jobs\nconst event = $json.event || 'completed';\nconst issueKey = $json.issueKey;\nconst result = $json.parsedOutput?.result || '';\nconst agent = $json.agent || 'unknown';\nconst status = $json.status || 'unknown';\n\n// Skip pipeline events and jobs without issueKey\nif (!issueKey || event.startsWith('pipeline:')) {\n  return [];\n}\n\n// Truncate for Jira (max ~30k chars)\nconst maxLen = 30000;\nconst truncResult = result.length > maxLen\n  ? result.substring(0, maxLen) + '\\n\\n... (truncated)'\n  : result;\n\n// Build ADF comment body\nconst content = [\n  {\n    type: 'paragraph',\n    content: [\n      { type: 'text', text: `Agent: ${agent} | Status: ${status}`, marks: [{ type: 'strong' }] }\n    ]\n  }\n];\n\nif (truncResult) {\n  content.push({\n    type: 'codeBlock',\n    attrs: { language: 'markdown' },\n    content: [{ type: 'text', text: truncResult.substring(0, 28000) }]\n  });\n}\n\nreturn [{\n  json: {\n    issueKey,\n    commentBody: JSON.stringify({\n      body: { type: 'doc', version: 1, content }\n    })\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        672
+      ],
+      "id": "build-jira-comment",
+      "name": "Build Jira comment"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{JIRA_HOST}}/rest/api/3/issue/{{ $json.issueKey }}/comment",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.commentBody }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1040,
+        672
+      ],
+      "id": "post-jira-comment",
+      "name": "Post Jira comment",
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "meeting-action-check",
+              "leftValue": "={{ !!$('Normalize callback').first().json.meetingAction }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "status-succeeded",
+              "leftValue": "={{ $('Normalize callback').first().json.status }}",
+              "rightValue": "succeeded",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "has-issue-key",
+              "leftValue": "={{ !!$('Normalize callback').first().json.issueKey }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1248,
+        672
+      ],
+      "id": "check-meeting-task",
+      "name": "Is meeting task?"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{JIRA_HOST}}/rest/api/3/issue/{{ $('Normalize callback').first().json.issueKey }}/transitions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1456,
+        576
+      ],
+      "id": "get-transitions-meeting",
+      "name": "Get transitions",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find the Done transition\nconst transitions = $json.transitions || [];\nconst done = transitions.find(t => t.name?.toLowerCase() === 'done');\n\nif (!done) {\n  return [{ json: { skip: true, reason: 'No Done transition found' } }];\n}\n\nreturn [{\n  json: {\n    transitionId: done.id,\n    issueKey: $('Normalize callback').first().json.issueKey\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        576
+      ],
+      "id": "find-done-transition",
+      "name": "Find Done transition"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "has-transition",
+              "leftValue": "={{ !!$json.transitionId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1872,
+        576
+      ],
+      "id": "has-done-transition",
+      "name": "Has Done transition?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{JIRA_HOST}}/rest/api/3/issue/{{ $json.issueKey }}/transitions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"transition\": { \"id\": \"{{ $json.transitionId }}\" } }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2080,
+        480
+      ],
+      "id": "transition-to-done",
+      "name": "Transition to Done",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize callback": {
+      "main": [
+        [
+          {
+            "node": "Is batch job?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is batch job?": {
+      "main": [
+        [
+          {
+            "node": "Update batch state",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has subtasks?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has subtasks?": {
+      "main": [
+        [
+          {
+            "node": "Prepare subtasks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has dispatch actions?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare subtasks": {
+      "main": [
+        [
+          {
+            "node": "Create subtask in Jira",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create subtask in Jira": {
+      "main": [
+        [
+          {
+            "node": "Process created subtask",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process created subtask": {
+      "main": [
+        [
+          {
+            "node": "Find unblocked subtasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find unblocked subtasks": {
+      "main": [
+        [
+          {
+            "node": "Trigger unblocked subtask",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update batch state": {
+      "main": [
+        [
+          {
+            "node": "Batch complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch complete?": {
+      "main": [
+        [
+          {
+            "node": "Build batch summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build batch summary": {
+      "main": [
+        [
+          {
+            "node": "Has Telegram context? (batch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Telegram context? (batch)": {
+      "main": [
+        [
+          {
+            "node": "Post batch summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has dispatch actions?": {
+      "main": [
+        [
+          {
+            "node": "Prepare batch creation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Telegram context? (no dispatch)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Jira comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Jira comment": {
+      "main": [
+        [
+          {
+            "node": "Post Jira comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Jira comment": {
+      "main": [
+        [
+          {
+            "node": "Is meeting task?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is meeting task?": {
+      "main": [
+        [
+          {
+            "node": "Get transitions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get transitions": {
+      "main": [
+        [
+          {
+            "node": "Find Done transition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Done transition": {
+      "main": [
+        [
+          {
+            "node": "Has Done transition?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Done transition?": {
+      "main": [
+        [
+          {
+            "node": "Transition to Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare batch creation": {
+      "main": [
+        [
+          {
+            "node": "Create batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create batch": {
+      "main": [
+        [
+          {
+            "node": "Build dispatch jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build dispatch jobs": {
+      "main": [
+        [
+          {
+            "node": "Dispatch to runner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Telegram context? (no dispatch)": {
+      "main": [
+        [
+          {
+            "node": "Post reply (no dispatch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

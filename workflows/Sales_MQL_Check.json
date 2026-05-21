@@ -1,0 +1,198 @@
+{
+  "name": "Sales MQL Check - Daily",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 18 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "mql-check-001",
+      "name": "Daily 18:00 UTC Weekdays"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate lightweight MQL check request\nconst today = new Date().toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    today,\n    idempotencyKey: `mql-check:daily:${today}`,\n    prompt: `Daily MQL threshold check. This is a lightweight check -- be concise and efficient.\\n\\n**IMPORTANT**: Read config.json at the runner working directory. Use the salesMarketing section for MQL configuration.\\n\\n1. Query Attio for all prospects where lead_score >= ${80} AND qualification is 'None' or empty\\n2. For each qualifying prospect, check if a buying signal was recorded in their Attio notes within the last ${14} days\\n3. If MQL criteria met (score >= threshold AND recent signal):\\n   - Set qualification to 'MQL' in Attio\\n   - Notify the sales space: '[Company] is now MQL (score: X, trigger: [signal])'\\n   - Create Jira task: '[Sales] Personalised outreach for [Company]'\\n4. Also check for stale MQLs: prospects with qualification='MQL' AND outreach_date > ${21} days ago AND response_type is None/No Response\\n   - Revert stale MQLs: set qualification to 'Disqualified', decrement lead_score by ${10}, add note\\n5. Report summary of new MQLs and reverted MQLs.`,\n    context: JSON.stringify({\n      instruction: \"Lightweight daily MQL check. Read salesMarketing config for thresholds. Be efficient -- this runs on Haiku.\",\n      configPath: \"claude-runner/config.json\",\n      configKeys: [\"salesMarketing\"]\n    })\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "mql-check-002",
+      "name": "Prepare MQL Check Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/agent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"sales-development\",\n  \"model\": \"haiku\",\n  \"prompt\": {{ JSON.stringify($json.prompt) }},\n  \"context\": {{ JSON.stringify($json.context) }},\n  \"source\": {\n    \"workflow\": \"Sales_MQL_Check\",\n    \"triggeredBy\": \"schedule:daily-mql-check\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "mql-check-003",
+      "name": "Dispatch MQL Check",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "mql-check-condition",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "mql-check-004",
+      "name": "Job Accepted?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_SALES }}",
+        "text": "*Daily MQL Check Running*\n\nDate: {{ $('Prepare MQL Check Request').item.json.today }}\n\nChecking for prospects crossing MQL threshold and stale MQL reversions.",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        -100
+      ],
+      "id": "mql-check-005",
+      "name": "Notify Sales Space (MQL Running)",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        880,
+        100
+      ],
+      "id": "mql-check-006",
+      "name": "Skip (Budget/Dedup)"
+    }
+  ],
+  "connections": {
+    "Daily 18:00 UTC Weekdays": {
+      "main": [
+        [
+          {
+            "node": "Prepare MQL Check Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare MQL Check Request": {
+      "main": [
+        [
+          {
+            "node": "Dispatch MQL Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch MQL Check": {
+      "main": [
+        [
+          {
+            "node": "Job Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Accepted?": {
+      "main": [
+        [
+          {
+            "node": "Notify Sales Space (MQL Running)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip (Budget/Dedup)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

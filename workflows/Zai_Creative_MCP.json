@@ -1,0 +1,153 @@
+{
+  "name": "Z.ai Creative Assets MCP",
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "bearerAuth",
+        "path": "zai-creative-mcp"
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ],
+      "id": "zai-mcp-trigger",
+      "name": "MCP Server Trigger",
+      "webhookId": "",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.z.ai/api/paas/v4/images/generations",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'cogview-4', prompt: $fromAI('prompt', 'Detailed description of the image to generate. Include style, composition, colors, and subject matter.', 'string'), size: $fromAI('size', 'Image dimensions. Options: 1024x1024 (square), 1792x1024 (landscape), 1024x1792 (portrait). Default: 1024x1024', 'string') || '1024x1024', n: 1 }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        200,
+        500
+      ],
+      "id": "zai-generate-image",
+      "name": "generate_image",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.z.ai/api/paas/v4/videos/generations",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'cogvideox-3', prompt: $fromAI('prompt', 'Detailed description of the video to generate. Include motion, style, duration hints, and subject matter.', 'string'), duration: parseInt($fromAI('duration', 'Video duration in seconds. Options: 6, 10, 15. Default: 6', 'string') || '6') }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        500
+      ],
+      "id": "zai-generate-video",
+      "name": "generate_video",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.z.ai/api/paas/v4/async-result/' + $fromAI('task_id', 'The task_id returned from a previous image or video generation request', 'string') }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        500
+      ],
+      "id": "zai-get-result",
+      "name": "get_generation_result",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "MCP Server Trigger": {
+      "ai_tool": [
+        [
+          {
+            "node": "generate_image",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "generate_video",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "get_generation_result",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 0,
+  "updatedAt": "2026-01-31T00:00:00.000Z"
+}

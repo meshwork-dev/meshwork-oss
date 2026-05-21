@@ -11,6 +11,8 @@ const nav = [
   { href: "/pipelines", label: "Pipelines", icon: "P" },
   { href: "/worktrees", label: "Worktrees", icon: "W" },
   { href: "/agents", label: "Agents", icon: "A" },
+  { href: "/office", label: "Office", icon: "3" },
+  { href: "/house", label: "The Loop", icon: "▶" },
   { href: "/metrics", label: "Metrics", icon: "M" },
   { href: "/batches", label: "Batches", icon: "B" },
   { href: "/conversations", label: "Conversations", icon: "C" },
@@ -18,6 +20,15 @@ const nav = [
   { href: "/scheduled", label: "Scheduled", icon: "S" },
   { href: "/operations", label: "Operations", icon: "O" },
   { href: "/guide", label: "Guide", icon: "?" },
+];
+
+const mobileNav = [
+  { href: "/", label: "Home", icon: "H" },
+  { href: "/house", label: "The Loop", icon: "▶" },
+  { href: "/chat", label: "Chat", icon: "T" },
+  { href: "/jobs", label: "Jobs", icon: "J" },
+  { href: "/pipelines", label: "Pipe", icon: "P" },
+  { href: "/agents", label: "Agents", icon: "A" },
 ];
 
 export function Sidebar() {
@@ -57,7 +68,7 @@ export function Sidebar() {
       </aside>
       {/* Mobile Bottom Nav */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 flex md:hidden bg-zinc-950 border-t border-zinc-800 px-1 py-1 justify-between shadow-lg">
-        {nav.slice(0, 6).map((item) => {
+        {mobileNav.map((item) => {
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link

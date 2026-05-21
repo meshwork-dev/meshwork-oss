@@ -1,0 +1,97 @@
+{
+  "name": "Daily Standup Schedule",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "standup-001",
+      "name": "Weekdays 9am"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine lookback period (3 days on Monday, 1 day otherwise)\nconst today = new Date();\nconst dayOfWeek = today.getDay(); // 0=Sun, 1=Mon, ...\nconst isMonday = dayOfWeek === 1;\nconst lookbackDays = isMonday ? 3 : 1;\n\nreturn [{\n  json: {\n    standupId: `standup-${today.toISOString().split('T')[0]}`,\n    date: today.toISOString().split('T')[0],\n    lookbackDays,\n    isMonday,\n    idempotencyKey: `standup:${today.toISOString().split('T')[0]}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "standup-002",
+      "name": "Prepare Standup Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"sprint-reporter\",\n  \"issueKey\": \"DAILY-STANDUP\",\n  \"summary\": \"Daily Standup Summary\",\n  \"description\": \"Generate daily standup summary. Look back {{ $json.lookbackDays }} day(s). Include completed work, in-progress items, and blockers. Format for Google Chat.\",\n  \"workingDir\": \"{{DEFAULT_WORKING_DIR}}\",\n  \"callbackUrl\": \"{{N8N_PUBLIC_URL}}/webhook/runner/callback\",\n  \"gchat\": {\n    \"space\": \"{{GCHAT_ENGINEERING_SPACE}}\",\n    \"thread\": null\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "standup-003",
+      "name": "Dispatch Standup Summary",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekdays 9am": {
+      "main": [
+        [
+          {
+            "node": "Prepare Standup Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Standup Request": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Standup Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

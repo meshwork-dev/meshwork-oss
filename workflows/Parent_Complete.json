@@ -1,0 +1,343 @@
+{
+  "name": "Parent Complete - Auto-Close Parent When All Subtasks Done",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "parent-complete",
+        "authentication": "headerAuth",
+        "options": {
+          "responseData": "={ \"ok\": true }"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "parent-complete-001",
+      "name": "Parent Complete Webhook",
+      "webhookId": "",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract parent issue key from the webhook payload\nconst body = $json.body || $json;\nconst issue = body.issue || {};\nconst parentKey = issue.fields?.parent?.key || body.parentKey || null;\n\nif (!parentKey) {\n  return [{ json: { skip: true, reason: 'No parent key found' } }];\n}\n\nreturn [{\n  json: {\n    skip: false,\n    parentKey,\n    subtaskKey: issue.key || '',\n    subtaskStatus: issue.fields?.status?.name || ''\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "parent-complete-002",
+      "name": "Extract Parent Key"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ !$json.skip }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        0
+      ],
+      "id": "parent-complete-003",
+      "name": "Has Parent?"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://certpilot.atlassian.net/rest/api/3/issue/{{ $json.parentKey }}?fields=subtasks,status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -100
+      ],
+      "id": "parent-complete-004",
+      "name": "Get Parent Issue",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if ALL subtasks are Done\nconst parent = $json;\nconst subtasks = parent.fields?.subtasks || [];\n\nif (subtasks.length === 0) {\n  return [{ json: { allDone: false, reason: 'No subtasks found' } }];\n}\n\nconst allDone = subtasks.every(st => {\n  const status = (st.fields?.status?.statusCategory?.key || '').toLowerCase();\n  return status === 'done';\n});\n\nconst parentKey = parent.key;\nconst currentStatus = parent.fields?.status?.name || '';\n\nreturn [{\n  json: {\n    allDone,\n    parentKey,\n    currentStatus,\n    totalSubtasks: subtasks.length,\n    doneSubtasks: subtasks.filter(st => (st.fields?.status?.statusCategory?.key || '').toLowerCase() === 'done').length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -100
+      ],
+      "id": "parent-complete-005",
+      "name": "Check All Subtasks Done"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "all-done-check",
+              "leftValue": "={{ $json.allDone }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1320,
+        -100
+      ],
+      "id": "parent-complete-006",
+      "name": "All Done?"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://certpilot.atlassian.net/rest/api/3/issue/{{ $json.parentKey }}/transitions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -200
+      ],
+      "id": "parent-complete-007",
+      "name": "Get Transitions",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find the 'Done' transition\nconst transitions = $json.transitions || [];\nconst parentKey = $('Check All Subtasks Done').first().json.parentKey;\n\nconst doneTransition = transitions.find(t => \n  t.name.toLowerCase() === 'done' || \n  t.to?.statusCategory?.key === 'done'\n);\n\nif (!doneTransition) {\n  return [{ json: { skip: true, reason: 'No Done transition found', parentKey } }];\n}\n\nreturn [{\n  json: {\n    skip: false,\n    parentKey,\n    transitionId: doneTransition.id,\n    transitionName: doneTransition.name\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -200
+      ],
+      "id": "parent-complete-008",
+      "name": "Find Done Transition"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://certpilot.atlassian.net/rest/api/3/issue/{{ $json.parentKey }}/transitions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"transition\": { \"id\": \"{{ $json.transitionId }}\" } }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        -200
+      ],
+      "id": "parent-complete-009",
+      "name": "Transition to Done",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://certpilot.atlassian.net/rest/api/3/issue/{{ $('Find Done Transition').first().json.parentKey }}/comment",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"body\": { \"type\": \"doc\", \"version\": 1, \"content\": [{ \"type\": \"paragraph\", \"content\": [{ \"type\": \"text\", \"text\": \"[AUTO-COMPLETE] All subtasks completed. Parent issue automatically transitioned to Done.\" }] }] } }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -200
+      ],
+      "id": "parent-complete-010",
+      "name": "Post AUTO-COMPLETE Comment",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Parent Complete Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Parent Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Parent Key": {
+      "main": [
+        [
+          {
+            "node": "Has Parent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Parent?": {
+      "main": [
+        [
+          {
+            "node": "Get Parent Issue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get Parent Issue": {
+      "main": [
+        [
+          {
+            "node": "Check All Subtasks Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check All Subtasks Done": {
+      "main": [
+        [
+          {
+            "node": "All Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All Done?": {
+      "main": [
+        [
+          {
+            "node": "Get Transitions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get Transitions": {
+      "main": [
+        [
+          {
+            "node": "Find Done Transition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Done Transition": {
+      "main": [
+        [
+          {
+            "node": "Transition to Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Done": {
+      "main": [
+        [
+          {
+            "node": "Post AUTO-COMPLETE Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

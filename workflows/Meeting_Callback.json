@@ -1,0 +1,133 @@
+{
+  "name": "Meeting Callback - Agent Responses",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meeting/callback",
+        "options": {
+          "responseData": "={ \"ok\": true }"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "mc-webhook",
+      "name": "Meeting Callback",
+      "webhookId": ""
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json;\nconst event = body.event || '';\n\nif (event === 'meeting:agent-response') {\n  const agent = body.agent || 'unknown';\n  const content = body.content || '';\n  const chatId = body.telegram?.chatId || '';\n  const topic = body.topic || '';\n  const round = body.round || 0;\n  const maxRounds = body.maxRounds || 0;\n\n  // Status messages (thinking indicators) — show as italic, no header\n  if (agent === 'status') {\n    return [{ json: { chatId, text: `_${content}_`, event } }];\n  }\n\n  // Format agent name nicely\n  const agentDisplay = agent.replace(/-/g, ' ').replace(/\\b\\w/g, l => l.toUpperCase());\n\n  // Build round indicator\n  const roundTag = round ? `_Round ${round}/${maxRounds}_\\n` : '';\n\n  let text = `${roundTag}*${agentDisplay}:*\\n\\n${content}`;\n\n  // Truncate for Telegram\n  if (text.length > 4000) text = text.substring(0, 3990) + '...';\n\n  return [{ json: { chatId, text, event } }];\n}\n\nif (event === 'meeting:ended') {\n  const chatId = body.telegram?.chatId || '';\n  const summary = body.summary || 'No summary';\n  const duration = body.duration ? Math.round(body.duration / 60) + ' minutes' : 'unknown';\n\n  let text = `*Meeting Ended*\\n\\n${summary}\\n\\n_Duration: ${duration} | ${body.messageCount || 0} messages_`;\n  if (text.length > 4000) text = text.substring(0, 3990) + '...';\n\n  return [{ json: { chatId, text, event } }];\n}\n\nreturn [{ json: { skip: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "mc-parse",
+      "name": "Format Response"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "has-chat",
+              "leftValue": "={{ !!$json.chatId && !$json.skip }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "mc-check",
+      "name": "Has Chat ID?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        -80
+      ],
+      "id": "mc-send",
+      "name": "Send to Telegram",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Meeting Callback": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Has Chat ID?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Chat ID?": {
+      "main": [
+        [
+          {
+            "node": "Send to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

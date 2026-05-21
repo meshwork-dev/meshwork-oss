@@ -1,0 +1,338 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "blocker-resolved",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "blocker-resolved-webhook",
+      "name": "Blocker Resolved Webhook",
+      "webhookId": "",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract completed subtask info\nconst body = $json.body || $json;\nconst issue = body.issue || {};\nconst fields = issue.fields || {};\n\nconst completedKey = issue.key;\nconst parentKey = fields.parent?.key || null;\n\nif (!completedKey || !parentKey) {\n  return [{ json: { skip: true, reason: 'Missing issue key or parent' } }];\n}\n\nreturn [{\n  json: {\n    completedKey,\n    parentKey,\n    summary: fields.summary || '',\n    status: fields.status?.name || 'Done'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "id": "extract-completed-info",
+      "name": "Extract completed info"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/api/3/issue/' + $json.completedKey + '?fields=issuelinks' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        400,
+        0
+      ],
+      "id": "get-completed-issue-links",
+      "name": "Get issue links",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find issues that were blocked by the completed subtask\nconst issueLinks = $json.fields?.issuelinks || [];\nconst completedInfo = $('Extract completed info').first().json;\nconst completedKey = completedInfo.completedKey;\nconst parentKey = completedInfo.parentKey;\n\n// Find \"blocks\" links - issues that this subtask was blocking\nconst blockedIssues = [];\nfor (const link of issueLinks) {\n  const linkType = link.type?.name?.toLowerCase() || '';\n  if (linkType.includes('block')) {\n    // outwardIssue = issue that THIS issue blocks\n    const blockedIssue = link.outwardIssue;\n    if (blockedIssue) {\n      blockedIssues.push({\n        key: blockedIssue.key,\n        status: blockedIssue.fields?.status?.name || '',\n        summary: blockedIssue.fields?.summary || ''\n      });\n    }\n  }\n}\n\nif (blockedIssues.length === 0) {\n  return [{ json: { skip: true, reason: 'No blocked issues found', completedKey, parentKey } }];\n}\n\nreturn [{\n  json: {\n    completedKey,\n    parentKey,\n    blockedIssues,\n    count: blockedIssues.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "id": "find-blocked-issues",
+      "name": "Find blocked issues"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "has-blocked-issues",
+              "leftValue": "={{ $json.count > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        0
+      ],
+      "id": "has-blocked-issues",
+      "name": "Has blocked issues?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split blocked issues for individual processing\nconst blockedIssues = $json.blockedIssues || [];\nconst parentKey = $json.parentKey;\nconst completedKey = $json.completedKey;\n\nreturn blockedIssues.map(issue => ({\n  json: {\n    issueKey: issue.key,\n    status: issue.status,\n    summary: issue.summary,\n    parentKey,\n    completedKey\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        -96
+      ],
+      "id": "split-blocked-issues",
+      "name": "Split blocked issues"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/api/3/issue/' + $json.issueKey + '?fields=issuelinks,labels,status,summary,description,parent' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1200,
+        -96
+      ],
+      "id": "get-blocked-issue-details",
+      "name": "Get blocked issue details",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if this blocked issue is now fully unblocked\nconst issue = $json;\nconst issueLinks = issue.fields?.issuelinks || [];\nconst labels = issue.fields?.labels || [];\nconst prevData = $('Split blocked issues').first().json;\n\n// Find remaining blockers (issues that block this one and are NOT done)\nconst remainingBlockers = [];\nfor (const link of issueLinks) {\n  const linkType = link.type?.name?.toLowerCase() || '';\n  if (linkType.includes('block')) {\n    // inwardIssue = issue that blocks THIS issue\n    const blockerIssue = link.inwardIssue;\n    if (blockerIssue) {\n      const blockerStatus = blockerIssue.fields?.status?.name?.toLowerCase() || '';\n      const isDone = blockerStatus === 'done' || blockerStatus === 'closed' || blockerStatus === 'resolved';\n      if (!isDone) {\n        remainingBlockers.push(blockerIssue.key);\n      }\n    }\n  }\n}\n\nconst isFullyUnblocked = remainingBlockers.length === 0;\n\n// Extract agent label\nconst agentLabel = labels.find(l => l.startsWith('agent:'));\n\n// Agent label mapping\nconst agentLabelMap = {\n  'agent:planner': 'engineer-planner',\n  'agent:implementer': 'engineer-implementer',\n  'agent:reviewer': 'engineer-reviewer',\n  'agent:pm': 'product-manager',\n  'agent:ui': 'ui-engineer',\n  'agent:marketing': 'marketing',\n  'agent:creative-assets': 'creative-assets',\n  'agent:bug-triage': 'bug-triage',\n  'agent:security': 'security-agent',\n  'agent:sprint-report': 'sprint-reporter',\n  'agent:standup': 'sprint-reporter'\n};\n\nconst agent = agentLabel ? (agentLabelMap[agentLabel] || 'engineer-implementer') : null;\n\n// Check current status - only trigger if not already in progress or done\nconst currentStatus = issue.fields?.status?.name?.toLowerCase() || '';\nconst shouldTrigger = isFullyUnblocked && \n                      agentLabel && \n                      currentStatus !== 'done' && \n                      currentStatus !== 'in progress';\n\nreturn [{\n  json: {\n    issueKey: issue.key,\n    isFullyUnblocked,\n    remainingBlockers,\n    agentLabel,\n    agent,\n    shouldTrigger,\n    currentStatus,\n    summary: issue.fields?.summary || '',\n    description: issue.fields?.description?.content?.[0]?.content?.[0]?.text || '',\n    parentKey: issue.fields?.parent?.key || prevData.parentKey\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        -96
+      ],
+      "id": "check-fully-unblocked",
+      "name": "Check if fully unblocked"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "should-trigger",
+              "leftValue": "={{ $json.shouldTrigger }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1600,
+        -96
+      ],
+      "id": "should-trigger-check",
+      "name": "Should trigger?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"{{ $json.agent }}\",\n  \"issueKey\": \"{{ $json.issueKey }}\",\n  \"summary\": {{ JSON.stringify($json.summary) }},\n  \"description\": {{ JSON.stringify($json.description || '') }},\n  \"workingDir\": \"{{DEFAULT_WORKING_DIR}}\",\n  \"callbackUrl\": \"{{N8N_PUBLIC_URL}}/webhook/runner/callback\",\n  \"parentKey\": {{ JSON.stringify($json.parentKey) }},\n  \"subtaskDepth\": 1\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1800,
+        -192
+      ],
+      "id": "trigger-unblocked-subtask",
+      "name": "Trigger unblocked subtask",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log that subtask still has blockers\nconst blockers = $json.remainingBlockers || [];\nconsole.log(`Subtask ${$json.issueKey} still blocked by: ${blockers.join(', ')}`);\n\nreturn [{\n  json: {\n    status: 'still-blocked',\n    issueKey: $json.issueKey,\n    remainingBlockers: blockers\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        0
+      ],
+      "id": "log-still-blocked",
+      "name": "Log still blocked"
+    }
+  ],
+  "connections": {
+    "Blocker Resolved Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract completed info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract completed info": {
+      "main": [
+        [
+          {
+            "node": "Get issue links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get issue links": {
+      "main": [
+        [
+          {
+            "node": "Find blocked issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find blocked issues": {
+      "main": [
+        [
+          {
+            "node": "Has blocked issues?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has blocked issues?": {
+      "main": [
+        [
+          {
+            "node": "Split blocked issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split blocked issues": {
+      "main": [
+        [
+          {
+            "node": "Get blocked issue details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get blocked issue details": {
+      "main": [
+        [
+          {
+            "node": "Check if fully unblocked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if fully unblocked": {
+      "main": [
+        [
+          {
+            "node": "Should trigger?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should trigger?": {
+      "main": [
+        [
+          {
+            "node": "Trigger unblocked subtask",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log still blocked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -13,6 +13,14 @@ const { EventEmitter } = require("events");
 const db = require("./db");
 const issueTracker = require("./issue-tracker");
 
+// Optional "big brother" router (the-loop) is only loaded if installed alongside the runner.
+let registerBigBrotherRoutes = null;
+try {
+  registerBigBrotherRoutes = require("../the-loop/router");
+} catch (_err) {
+  registerBigBrotherRoutes = (app, _opts) => app;
+}
+
 /**
  * Event emitter for job lifecycle events
  */
@@ -75,13 +83,13 @@ function loadConfig() {
     sseEnabled: fileConfig.sseEnabled !== false,
 
     // Paths
-    workingDir: expandPath(fileConfig.workingDir) || "/tmp/project",
+    workingDir: expandPath(fileConfig.workingDir) || process.env.DEFAULT_WORKING_DIR || process.cwd(),
     logDir: expandPath(fileConfig.logDir) || path.join(os.homedir(), "claude-runner-logs"),
     convDir: expandPath(fileConfig.convDir) || null, // Will default to logDir/conversations
     allowedRoots: fileConfig.allowedRoots || [],
 
     // URLs
-    callbackUrl: fileConfig.callbackUrl || "",
+    callbackUrl: fileConfig.callbackUrl || process.env.N8N_CALLBACK_URL || null,
     internalCallbackUrl: fileConfig.internalCallbackUrl || null,
 
     // Conversation settings
@@ -230,6 +238,11 @@ function loadConfig() {
       scheduledMeetings: fileConfig.meetings?.scheduledMeetings || [],
       allowedTools: fileConfig.meetings?.allowedTools || [],
       autoDispatchActions: fileConfig.meetings?.autoDispatchActions !== false,
+      // Implicit gate (auto-pause) tuning — see detectImplicitGateNeed/judgeBorderlineGate
+      implicitGateStoryThreshold: fileConfig.meetings?.implicitGateStoryThreshold ?? 3,
+      implicitGateActionThreshold: fileConfig.meetings?.implicitGateActionThreshold ?? 5,
+      implicitGateLLMEnabled: fileConfig.meetings?.implicitGateLLMEnabled !== false,
+      implicitGateLLMThreshold: fileConfig.meetings?.implicitGateLLMThreshold ?? 6,
     },
 
     // Jira direct API access (for auto-transitions without Claude CLI)
@@ -238,6 +251,10 @@ function loadConfig() {
       email: process.env.JIRA_EMAIL || fileConfig.jira?.email || "",
       apiToken: process.env.JIRA_API_TOKEN || fileConfig.jira?.apiToken || "",
     },
+
+    // Per-agent MCP allowlist (agent name -> array of MCP server names; null/missing = all servers)
+    // alwaysLoad servers (e.g. n8n-jira-mcp) are always included regardless of allowlist.
+    agentMcps: fileConfig.agentMcps || {},
 
     // Agent label mapping (agent:label -> agent name)
     agentLabels: fileConfig.agentLabels || {
@@ -269,11 +286,34 @@ function loadConfig() {
       "agent:uat-agent": "uat-agent",
       "agent:sales-development": "sales-development",
       "agent:sales-researcher": "sales-researcher",
-      "agent:sales-outreach": "sales-outreach"
+      "agent:sales-outreach": "sales-outreach",
+      // Malformed short aliases occasionally applied by humans or upstream
+      // agents that didn't follow the full-name convention. Map them so the
+      // reconciler dispatches the right agent and the post-job strip can
+      // remove them, instead of leaving them stuck on the issue forever.
+      "agent:ba": "ba-agent",
+      "agent:ux": "ux-agent",
+      "agent:qa": "qa-agent",
+      "agent:architect": "architect-jets",
+      "agent:ask-tom": "ask-tom-agent",
+      "agent:uat": "uat-agent",
+      "agent:e2e": "e2e-builder"
     },
 
     // Sprint Runner: auto-dispatch To Do issues from active sprints
     sprintRunner: fileConfig.sprintRunner || { enabled: false },
+
+    // Agent Label Reconciler: catch issues with agent:* labels that the sprint
+    // runner missed (in-flight status, manual labels, webhook drops). Also fires
+    // immediately after every successful agent job to dispatch follow-up routing.
+    agentLabelReconciler: {
+      enabled: fileConfig.agentLabelReconciler?.enabled !== false,
+      intervalMinutes: fileConfig.agentLabelReconciler?.intervalMinutes || 15,
+      idempotencyMinutes: fileConfig.agentLabelReconciler?.idempotencyMinutes || 30,
+      lookbackDays: fileConfig.agentLabelReconciler?.lookbackDays || 14,
+      maxPerProductCycle: fileConfig.agentLabelReconciler?.maxPerProductCycle || 10,
+      skipLabels: fileConfig.agentLabelReconciler?.skipLabels || ["on-hold", "blocked"],
+    },
 
     // Local team members: route specified teammates through LM Studio instead of Claude
     localTeamMembers: {
@@ -598,6 +638,9 @@ function buildOptimizedPluginDir(agentName, product, jobId, provider) {
   try {
     const tmpBase = path.join(os.tmpdir(), `certpilot-ctx-${jobId}`);
     const tmpSkills = path.join(tmpBase, 'skills');
+    // Clean leftover dir from previous attempt — retries reuse jobId, so existing
+    // symlinks would cause EEXIST on subsequent symlinkSync calls.
+    fs.rmSync(tmpBase, { recursive: true, force: true });
     fs.mkdirSync(tmpSkills, { recursive: true });
 
     // Symlink full agents directory (all agent defs available for team spawning)
@@ -646,6 +689,78 @@ function buildOptimizedPluginDir(agentName, product, jobId, provider) {
     return tmpBase;
   } catch (err) {
     console.error(`[${nowIso()}] Failed to build optimized plugin dir: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Build a filtered MCP config file for an agent and return its path.
+ * Merges product .mcp.json + shared-skills .mcp.json + working-dir .mcp.json,
+ * then keeps only servers in config.agentMcps[agent] (plus any with alwaysLoad: true).
+ * Used with --mcp-config + --strict-mcp-config to suppress fan-out of unused MCPs.
+ * Returns the file path, or null if no allowlist is configured for the agent.
+ */
+function buildFilteredMcpConfig(agentName, product, jobId, workingDir, optimizedDir) {
+  if (!agentName || !product) return null;
+  const baseAllow = config.agentMcps?.[agentName];
+  if (!Array.isArray(baseAllow)) return null; // No allowlist → fall back to default behaviour
+
+  // Team leads (e.g. engineer-planner) spawn teammates in-process — union their allowlists
+  // so the lead's subprocess has every MCP its teammates may need.
+  const allowlistSet = new Set(baseAllow);
+  const teamConfig = config.teams?.teamLeads?.[agentName];
+  if (teamConfig?.teammates?.length) {
+    for (const teammate of teamConfig.teammates) {
+      const tAllow = config.agentMcps?.[teammate];
+      if (Array.isArray(tAllow)) tAllow.forEach(s => allowlistSet.add(s));
+    }
+  }
+  const allowlist = [...allowlistSet];
+
+  const merged = { mcpServers: {} };
+  const sources = [];
+  const sharedDir = resolveSharedSkillsDir();
+  if (sharedDir) sources.push(path.join(sharedDir, '.mcp.json'));
+  sources.push(path.join(resolvePluginDir(product), '.mcp.json'));
+  if (workingDir) sources.push(path.join(workingDir, '.mcp.json'));
+
+  for (const src of sources) {
+    try {
+      if (!fs.existsSync(src)) continue;
+      const data = JSON.parse(fs.readFileSync(src, 'utf8'));
+      if (data.mcpServers) {
+        Object.assign(merged.mcpServers, data.mcpServers);
+      }
+    } catch (err) {
+      console.error(`[${nowIso()}] Failed to read ${src}: ${err.message}`);
+    }
+  }
+
+  const allow = new Set(allowlist);
+  const filtered = { mcpServers: {} };
+  let kept = 0, alwaysLoadKept = 0, dropped = 0;
+  for (const [name, def] of Object.entries(merged.mcpServers)) {
+    if (allow.has(name)) {
+      filtered.mcpServers[name] = def;
+      kept++;
+    } else if (def && def.alwaysLoad === true) {
+      filtered.mcpServers[name] = def;
+      alwaysLoadKept++;
+    } else {
+      dropped++;
+    }
+  }
+
+  // Only write into optimizedDir so cleanupOptimizedPluginDir removes it; otherwise we'd leak.
+  if (!optimizedDir) return null;
+
+  try {
+    const outPath = path.join(optimizedDir, `mcp-${jobId}.json`);
+    fs.writeFileSync(outPath, JSON.stringify(filtered, null, 2));
+    console.log(`[${nowIso()}] MCP filter: ${agentName} → kept ${kept} (+${alwaysLoadKept} alwaysLoad), dropped ${dropped} → ${outPath}`);
+    return outPath;
+  } catch (err) {
+    console.error(`[${nowIso()}] Failed to write filtered MCP config: ${err.message}`);
     return null;
   }
 }
@@ -1246,6 +1361,190 @@ function checkMeetingDuplicate(topic) {
   return { duplicate: false };
 }
 
+// Detects user requests for a human-in-the-loop gate.
+// Deterministic source of truth — runs against the topic AND any user-injected transcript turns.
+// Patterns require first-person framing or explicit "any/all/the" determiners to avoid false
+// positives on benign meeting topics ("talk through approach before writing tests").
+const GATE_INTENT_RE = /(prompt me|ask me first|don'?t (?:write|create|make|do|dispatch)(?: any| anything| yet|\b)|wait for (?:me|my (?:input|approval|decision|sign[- ]?off|review))|before (?:you )?(?:writ(?:e|ing)|creat(?:e|ing)|mak(?:e|ing)|dispatch(?:ing)?) (?:any|all|anything)\b|present (?:me )?(?:the )?options(?: to me)?|let me (?:see|review|decide|weigh|choose|approve)|nothing yet|hold (?:off|on)|check with me|discuss with me first|gate (?:before|on)|approval (?:before|first|required)|i (?:want to|need to|will) (?:approve|review|decide))/i;
+
+function detectGateIntent(text) {
+  if (!text) return false;
+  return GATE_INTENT_RE.test(String(text).toLowerCase());
+}
+
+// Re-scan a meeting at outcomes time. Belt-and-braces fallback in case the in-memory
+// gateBeforeDispatch flag was lost (DB reload, restart, alternate creation path).
+// Checks: explicit flag, topic, AND any human/user turns in the transcript.
+function detectGateIntentForMeeting(meeting) {
+  if (meeting.gateBeforeDispatch === true) return { gated: true, source: "flag" };
+  if (detectGateIntent(meeting.topic)) return { gated: true, source: "topic" };
+  for (const turn of meeting.transcript || []) {
+    const role = (turn.role || turn.speaker || "").toLowerCase();
+    const isHuman = role === "user" || role === "human" || role === "mark" || turn.fromUser === true;
+    if (!isHuman) continue;
+    const txt = turn.content || turn.text || turn.message || "";
+    if (detectGateIntent(txt)) return { gated: true, source: "transcript" };
+  }
+  return { gated: false, source: null };
+}
+
+// Implicit gate detection: pause for human input when the meeting outcome shows
+// signals that warrant review even if the user never asked for it explicitly.
+// Cheap, deterministic rules over the generated outcomes summary. Returns a gate
+// result on first matching rule, or null if nothing fires.
+function detectImplicitGateNeed(meeting, summary) {
+  if (!summary || typeof summary !== "string") return null;
+  const reasons = [];
+
+  // 1. New stories / epics proposed in bulk
+  // (no m-flag here — we want $ to mean end-of-string, not end-of-line, so the
+  // lazy [\s\S]*? doesn't terminate immediately at the heading's own newline)
+  let storyCount = 0;
+  const storyHeading = summary.match(/##+\s*(?:new\s+)?(?:stories|epics)\b[\s\S]*?(?=\n##|$)/i);
+  if (storyHeading) {
+    storyCount = (storyHeading[0].match(/^\s*[-*]\s+/gm) || []).length;
+  }
+  const createStoryMentions = (summary.match(/\bcreate\s+(?:a\s+|new\s+|several\s+|multiple\s+)?(?:story|stories|epic|epics)\b/gi) || []).length;
+  const totalNewStories = Math.max(storyCount, createStoryMentions);
+  const storyThreshold = config.meetings?.implicitGateStoryThreshold ?? 3;
+  if (totalNewStories > storyThreshold) reasons.push(`stories>${storyThreshold}(${totalNewStories})`);
+
+  // 2. Schema / migration / DB structural change
+  if (/\b(schema\s+(?:change|migration)|database\s+migration|alter\s+table|drop\s+table|drop\s+column|add\s+column|new\s+migration|prisma\s+migrate|knex\s+migrate)\b/i.test(summary)) {
+    reasons.push("schema/migration");
+  }
+
+  // 3. Multi-product touch (more than one Jira project key or product name)
+  const projects = new Set();
+  const issueKeyMatches = summary.match(/\b(CER|EOS|WMS|LEBC)-\d+\b/g) || [];
+  for (const m of issueKeyMatches) projects.add(m.split("-")[0]);
+  const productMatches = summary.match(/\b(CertPilot|EstateOS|WarrantyManagement|LEBC)\b/g) || [];
+  for (const m of productMatches) {
+    const map = { CertPilot: "CER", EstateOS: "EOS", WarrantyManagement: "WMS", LEBC: "LEBC" };
+    projects.add(map[m] || m);
+  }
+  if (projects.size > 1) reasons.push(`products>1(${[...projects].join(",")})`);
+
+  // 4. Closing / superseding / deprecating an existing tracked issue
+  if (/\b(close|won'?t\s*do|wont[- ]do|supersede|deprecate|archive|rollback|abandon)\b[^.\n]{0,40}\b[A-Z]{2,5}-\d+\b/i.test(summary)
+      || /\b[A-Z]{2,5}-\d+\b[^.\n]{0,40}\b(close|won'?t\s*do|deprecate|supersede|archive)\b/i.test(summary)) {
+    reasons.push("closing-existing-issue");
+  }
+
+  // 5. Destructive operations on infrastructure / shared resources
+  // (verb and noun within ~40 chars on the same line — tolerates object names like "drop the audit_log table")
+  if (/\b(?:delete|drop|wipe|purge|truncate|remove|deprecate)\b[^.\n]{0,40}\b(?:database|table|service|component|module|repository|repo|workflow|pipeline|api\s+endpoint|microservice|cluster|namespace)\b/i.test(summary)) {
+    reasons.push("destructive-op");
+  }
+
+  // 6. Broad action surface — many items dispatched at once
+  const actionItemCount = (summary.match(/^\s*-\s*\[\s*\]/gm) || []).length;
+  const actionThreshold = config.meetings?.implicitGateActionThreshold ?? 5;
+  if (actionItemCount > actionThreshold) reasons.push(`actions>${actionThreshold}(${actionItemCount})`);
+
+  if (reasons.length === 0) return null;
+  return { gated: true, source: `rule:${reasons[0]}`, reason: reasons.join("; ") };
+}
+
+// Borderline LLM judgment: invoked only when no deterministic rule fires AND
+// there are action items to dispatch. Uses Haiku for cost. Fails open (no gate)
+// on parse error, timeout, or non-zero exit so this never blocks a meeting.
+async function judgeBorderlineGate(meeting, summary) {
+  if (!summary) return null;
+  if (config.meetings?.implicitGateLLMEnabled === false) return null;
+  const actionItemCount = (summary.match(/^\s*-\s*\[\s*\]/gm) || []).length;
+  if (actionItemCount === 0) return null;
+
+  const threshold = config.meetings?.implicitGateLLMThreshold ?? 6;
+  const truncated = summary.length > 6000 ? summary.substring(0, 6000) + "\n... (truncated)" : summary;
+  const prompt = [
+    `You are a meeting governance assistant for an AI-driven dev platform.`,
+    ``,
+    `Score 0-10 the likelihood that the human owner (Mark) should review and approve the action items below BEFORE they are dispatched as Jira issues, code changes, and agent work.`,
+    ``,
+    `High score (7-10): broad refactor, multi-product impact, ambiguous direction, novel initiative, deletion or deprecation of working features, items contradicting each other, scope creep beyond the meeting topic, business or product strategy decisions.`,
+    `Low score (0-3): a few small bug fixes, well-defined narrow tasks, routine maintenance, clear single-component changes, items already discussed and agreed.`,
+    ``,
+    `Reply on a single line with EXACTLY this format and nothing else:`,
+    `SCORE: <0-10> | REASON: <short reason in <=15 words>`,
+    ``,
+    `Meeting topic: ${meeting.topic}`,
+    `Outcomes summary:`,
+    truncated,
+  ].join("\n");
+
+  const args = [...config.claude.baseArgs];
+  args.push("--model", config.claude?.models?.haiku || "claude-haiku-4-5-20251101");
+  args.push("-p");
+  args.push("--output-format", "stream-json", "--verbose");
+  const cliCmd = config.claude?.command || "claude";
+
+  return new Promise((resolve) => {
+    let proc;
+    try {
+      proc = spawn(cliCmd, args, {
+        cwd: meeting.workingDir,
+        env: { ...process.env, ...getOAuthEnvVars() },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (e) {
+      console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: borderline judgment spawn failed: ${e.message}`);
+      return resolve(null);
+    }
+    let stdout = "";
+    proc.stdout.on("data", (d) => { stdout += d.toString(); });
+    proc.stderr.on("data", () => {});
+    try {
+      proc.stdin.write(prompt);
+      proc.stdin.end();
+    } catch {}
+
+    const timeout = setTimeout(() => {
+      try { proc.kill("SIGTERM"); } catch {}
+      console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: borderline judgment timed out — failing open (no gate)`);
+      resolve(null);
+    }, 30_000);
+
+    proc.on("close", () => {
+      clearTimeout(timeout);
+      const textParts = [];
+      for (const line of stdout.split("\n")) {
+        const t = line.trim();
+        if (!t) continue;
+        try {
+          const ev = JSON.parse(t);
+          if (ev.type === "assistant" && ev.message) {
+            for (const b of (ev.message.content || [])) {
+              if (b.type === "text" && b.text) textParts.push(b.text);
+            }
+          } else if (ev.type === "result" && ev.result) {
+            if (!textParts.length) textParts.push(ev.result);
+          }
+        } catch {}
+      }
+      const content = textParts.join("").trim();
+      const m = content.match(/SCORE:\s*(\d+(?:\.\d+)?)\s*\|\s*REASON:\s*(.+)/i);
+      if (!m) {
+        console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: borderline judgment unparseable: "${content.substring(0, 200)}"`);
+        return resolve(null);
+      }
+      const score = Math.round(parseFloat(m[1]));
+      const reason = m[2].trim();
+      console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: borderline judgment score=${score} threshold=${threshold} reason="${reason}"`);
+      if (score >= threshold) {
+        return resolve({ gated: true, source: `llm:confidence=${score}`, reason });
+      }
+      resolve(null);
+    });
+
+    proc.on("error", (e) => {
+      clearTimeout(timeout);
+      console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: borderline judgment proc error: ${e.message}`);
+      resolve(null);
+    });
+  });
+}
+
 function createMeeting(options) {
   const meetingId = `mtg_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
   // Normalize mode: "directed"/"chair" → "chair", "serial"/"roundRobin" → "roundRobin".
@@ -1254,15 +1553,19 @@ function createMeeting(options) {
   const agents = options.agents || ["product-manager", "engineer-planner"];
   // Smart chair selection: prefer product-manager if present, else first participant.
   const chair = selectChair(agents, options.chair);
+  const topic = options.topic || "Team Meeting";
+  // Gate-before-dispatch: explicit body flag wins; otherwise sniff topic for "prompt me"-style asks.
+  const gateBeforeDispatch =
+    options.gateBeforeDispatch === true || detectGateIntent(topic);
   const meeting = {
     meetingId,
-    topic: options.topic || "Team Meeting",
+    topic,
     agents,
     facilitator: options.facilitator || agents[0] || "product-manager",
     chair,
     mode, // canonical: "chair" or "roundRobin"
     transcript: [], // { role: "user"|"agent", agent?: string, name: string, content: string, timestamp: string }
-    status: "active", // active, paused, ended
+    status: "active", // active, paused, ended, awaiting-approval, rejected
     telegram: options.telegram || null,
     callbackUrl: options.callbackUrl || null,
     workingDir: options.workingDir || DEFAULT_WORKING_DIR,
@@ -1276,6 +1579,10 @@ function createMeeting(options) {
     maxTurns: options.maxTurns || (mode === "chair" ? 20 : 0), // chair mode turn limit
     turnCount: 0, // total CLI invocations in this meeting
     summary: null,
+    gateBeforeDispatch, // true → pause for human approval after outcomes generation
+    awaitingApproval: false, // set true when paused waiting for /meeting/:id/decision
+    refinementsUsed: 0, // number of refine cycles consumed (cap = 3)
+    decision: null, // { decision: "approve"|"reject"|"refine", refinement?, decidedAt }
   };
   // Resolve product from workingDir for cross-project isolation.
   // If workingDir is the default (no explicit override), also try resolving from telegram chatId
@@ -1496,6 +1803,12 @@ function buildOutcomesPrompt(meeting) {
     "",
     "Generate a structured meeting summary. Be specific — reference who said what and extract real commitments.",
     "",
+    "HUMAN-APPROVAL CHECK (read carefully):",
+    "Look back at the meeting topic and transcript. Did the user (NOT an agent) explicitly request human input or approval before any action is taken? Phrases that count: \"prompt me\", \"ask me first\", \"don't write/create yet\", \"present options to me\", \"discuss with me first\", \"hold off\", \"wait for my input\", \"let me decide\", \"check with me\".",
+    "If YES — emit the literal directive `[REQUIRES-APPROVAL]` on its OWN LINE at the very TOP of the summary, before the `## Decisions` heading. This will pause dispatch until the user approves.",
+    "If NO — do NOT emit the directive. Default is to dispatch immediately.",
+    "Be conservative: only emit it when the user explicitly asked for a gate. Agents flagging caution does NOT count.",
+    "",
     "Format your response EXACTLY as follows:",
     "",
     "## Decisions",
@@ -1508,8 +1821,15 @@ function buildOutcomesPrompt(meeting) {
     "DEFAULT: All action items are dispatched IMMEDIATELY (no Schedule field). This is the preferred behaviour.",
     "ONLY add a Schedule field if there is a genuine timing dependency (e.g. must wait for another task to finish first, or a specific calendar slot like a meeting).",
     "Do NOT schedule things for 'tomorrow' or 'next week' unless there is a real reason to wait.",
+    "",
+    "DO NOT list the meeting topic itself as an action item. The topic is the conversation, not a task. Examples of what NOT to write as action items:",
+    "  ✗ \"Talk about X\" / \"Discuss Y\" / \"Where do we stand on Z\" / \"Give an update on Q\" — these are meeting topics, not work to be done.",
+    "  ✗ Re-statements of the topic prefixed with verbs like 'discuss', 'talk about', 'review', 'cover', 'address'.",
+    "Action items must be CONCRETE WORK PRODUCTS — something an agent will produce, change, send, or decide. If you cannot describe the deliverable in one sentence, it is not an action item.",
     `- [ ] [task] — Owner: [agent-name] — Priority: [High/Medium/Low]`,
     `- [ ] [task with timing dependency] — Owner: [agent-name] — Priority: [High/Medium/Low] — Schedule: [ISO datetime or relative like 'in 30 minutes', 'today 14:00']`,
+    `- [ ] [task that depends on a prior action item] — Owner: [agent-name] — Priority: [High/Medium/Low] — DependsOn: [N]`,
+    "If an action item cannot start until another action item in this list completes, add — DependsOn: [N] where N is the 1-based index of the prerequisite (e.g. DependsOn: [1] means it waits for action item 1; DependsOn: [1, 2] means it waits for both). Omit DependsOn if the task is independent. The runner uses these to set Jira blocks/is-blocked-by links and gates execution order automatically.",
     "",
     `CRITICAL: The Owner field MUST be one of these exact agent names (no prefix): ${[...new Set([...meeting.agents, ...allAgents])].join(", ")}`,
     "Do NOT prefix with 'certpilot:' or any namespace. Just the plain agent name (e.g. 'product-manager', NOT 'certpilot:product-manager').",
@@ -2596,16 +2916,100 @@ async function generateAndFinalizeOutcomes(meeting) {
     });
   });
 
-  // End meeting
+  // Detect [REQUIRES-APPROVAL] directive emitted by the outcomes LLM (extra signal, not relied on).
+  // Strip the directive from the displayed summary so it doesn't leak into Telegram/Confluence.
+  const requiresApprovalDirective = /^[ \t]*\[REQUIRES-APPROVAL\][ \t]*\r?\n/im.test(outcomesResult.content);
+  const cleanSummary = outcomesResult.content.replace(/^[ \t]*\[REQUIRES-APPROVAL\][ \t]*\r?\n/im, "").trim();
+  // Deterministic recompute: defends against lost in-memory flags (restart, DB reload, alt creation paths)
+  // and against the LLM forgetting to emit [REQUIRES-APPROVAL]. Source of truth is the user's words.
+  const intentResult = detectGateIntentForMeeting(meeting);
+  let gated = intentResult.gated || requiresApprovalDirective;
+  let gateSource = intentResult.gated ? intentResult.source : (requiresApprovalDirective ? "llm-directive" : null);
+  let gateReason = null;
+
+  // Implicit gate — fires when no explicit ask was made but the outcomes show
+  // signals warranting human review (broad scope, schema changes, multi-product, etc.).
+  // Cheap rules first, then optional LLM borderline judgment for ambiguous cases.
+  if (!gated) {
+    const ruleResult = detectImplicitGateNeed(meeting, cleanSummary);
+    if (ruleResult) {
+      gated = true;
+      gateSource = ruleResult.source;
+      gateReason = ruleResult.reason;
+    } else {
+      const llmResult = await judgeBorderlineGate(meeting, cleanSummary);
+      if (llmResult) {
+        gated = true;
+        gateSource = llmResult.source;
+        gateReason = llmResult.reason;
+      }
+    }
+  }
+
+  meeting.summary = cleanSummary;
+
+  if (gated) {
+    // Pause: hold dispatch + Confluence + N8N outcomes until /meeting/:id/decision is called.
+    meeting.gateBeforeDispatch = true; // persist canonical truth
+    meeting.status = "awaiting-approval";
+    meeting.awaitingApproval = true;
+    meeting.awaitingApprovalSince = nowIso();
+    meeting.gateSource = gateSource;
+    meeting.gateReason = gateReason;
+    db.meetings.set(meeting).catch(e => console.error('[db] meeting update failed: ' + e.message));
+
+    // Strip agent:* labels from any issues meeting agents created mid-conversation,
+    // BEFORE the user is told the meeting is awaiting approval. Stops the periodic
+    // reconciler from racing the human and dispatching the work without approval.
+    await quarantineMeetingCreatedIssues(meeting).catch(e =>
+      console.error(`[meeting-quarantine] ${meeting.meetingId}: ${e.message}`)
+    );
+
+    console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: GATED — awaiting approval (source=${gateSource}, reason=${gateReason || "n/a"}, directive=${requiresApprovalDirective}, flag=${meeting.gateBeforeDispatch})`);
+
+    // Post the summary + approval instructions to Telegram (via existing N8N callback path).
+    if (callbackUrl && telegram) {
+      let outcomesText = cleanSummary;
+      if (outcomesText.length > 3400) outcomesText = outcomesText.substring(0, 3400) + "\n…(truncated)";
+      const isImplicit = gateSource && (gateSource.startsWith("rule:") || gateSource.startsWith("llm:"));
+      const whyLine = isImplicit
+        ? `_Auto-paused (${gateSource}): ${gateReason || "needs review"}._`
+        : `_Nothing has been written to Jira and no agents have been dispatched._`;
+      const prompt = [
+        `*⏸ Meeting awaiting your input* — \`${meeting.meetingId}\``,
+        ``,
+        outcomesText,
+        ``,
+        whyLine,
+        `Reply in admin DM:`,
+        `• \`/approve ${meeting.meetingId}\` — dispatch all action items`,
+        `• \`/reject ${meeting.meetingId}\` — discard, do nothing`,
+        `• \`/refine ${meeting.meetingId} <your guidance>\` — keep discussing (max 3 rounds)`,
+      ].join("\n");
+      sendMeetingCallback(callbackUrl, {
+        event: "meeting:agent-response",
+        meetingId: meeting.meetingId,
+        agent: "Meeting — Awaiting Approval",
+        content: prompt,
+        telegram, topic,
+      });
+    }
+
+    if (config.sseEnabled) {
+      jobEmitter.emit("meeting:awaiting-approval", { meetingId: meeting.meetingId, topic });
+    }
+    return;
+  }
+
+  // End meeting (ungated path — original behaviour)
   meeting.status = "ended";
   meeting.endedAt = nowIso();
-  meeting.summary = outcomesResult.content;
   db.meetings.set(meeting).catch(e => console.error('[db] meeting update failed: ' + e.message));
 
 
   // Post outcomes to Telegram
   if (callbackUrl && telegram) {
-    let outcomesText = outcomesResult.content;
+    let outcomesText = meeting.summary;
     if (outcomesText.length > 3800) {
       outcomesText = outcomesText.substring(0, 3790) + "\n...(truncated)";
     }
@@ -2641,6 +3045,31 @@ async function generateAndFinalizeOutcomes(meeting) {
   dispatchMeetingActions(meeting).catch(e => {
     console.error(`[${nowIso()}] Meeting ${meeting.meetingId}: dispatchMeetingActions error: ${e.message}`);
   });
+}
+
+/**
+ * Detect action items that are just echoes of the meeting topic (Bug B).
+ * Catches openers like "talk about", "discuss", "give an update on", "where do we stand on",
+ * and items whose normalised body substantially overlaps with the topic.
+ */
+function isMeetingTopicEcho(task, topic) {
+  if (!task) return false;
+  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const t = norm(task);
+  if (!t) return false;
+  const conversationalOpeners = /^(talk about|discuss|cover|review|address|debate|chat about|give (?:me )?(?:an )?update on|provide (?:an )?update on|where (?:do|are) we stand|read this|need an intro)/;
+  if (conversationalOpeners.test(t)) return true;
+  const topicNorm = norm(topic);
+  if (topicNorm && topicNorm.length >= 8) {
+    if (t === topicNorm) return true;
+    const topicWords = new Set(topicNorm.split(" ").filter(w => w.length > 3));
+    if (topicWords.size >= 3) {
+      const taskWords = t.split(" ").filter(w => w.length > 3);
+      const overlap = taskWords.filter(w => topicWords.has(w)).length;
+      if (overlap / topicWords.size >= 0.8 && taskWords.length <= topicWords.size + 2) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -2739,8 +3168,9 @@ async function dispatchMeetingActions(meeting) {
     }
   }
 
-  // Parse action items — with optional Schedule field
-  const actionRegex = /- \[ \] (.+?)(?:\s*[—–-]\s*Owner:\s*\*{0,2}(\S+?)\*{0,2}\s*[—–-]\s*Priority:\s*\*{0,2}(High|Medium|Low)\*{0,2})(?:\s*[—–-]\s*Schedule:\s*(.+?))?$/gim;
+  // Parse action items — with optional Schedule and DependsOn fields
+  // Groups: 1=task, 2=owner, 3=priority, 4=scheduleStr, 5=dependsOnStr
+  const actionRegex = /- \[ \] (.+?)(?:\s*[—–-]\s*Owner:\s*\*{0,2}(\S+?)\*{0,2}\s*[—–-]\s*Priority:\s*\*{0,2}(High|Medium|Low)\*{0,2})(?:\s*[—–-]\s*Schedule:\s*([^—–\n\r]+?))?(?:\s*[—–-]\s*DependsOn:\s*\[([^\]]*)\])?$/gim;
   const actions = [];
   let match;
   while ((match = actionRegex.exec(summary)) !== null) {
@@ -2748,15 +3178,24 @@ async function dispatchMeetingActions(meeting) {
     let owner = match[2].trim().replace(/\*+/g, "");
     const priority = match[3].trim();
     const scheduleStr = match[4]?.trim() || null;
+    const dependsOnStr = match[5]?.trim() || null;
+    const dependsOn = dependsOnStr
+      ? dependsOnStr.split(",").map(s => parseInt(s.trim(), 10) - 1).filter(n => Number.isFinite(n) && n >= 0)
+      : [];
     // Strip namespace prefixes like "certpilot:" that agents sometimes add
     if (owner.includes(":")) {
       owner = owner.split(":").pop();
     }
-    if (agentNameMap[owner]) {
-      actions.push({ task, owner, priority, scheduleStr });
-    } else {
+    if (!agentNameMap[owner]) {
       console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: Skipping action item — unknown owner "${owner}" (original: ${match[2]})`);
+      continue;
     }
+    // Filter out items that are just restatements of the meeting topic (Bug B)
+    if (isMeetingTopicEcho(task, meeting.topic)) {
+      console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: Skipping action item — looks like a meeting-topic echo: "${task.substring(0, 80)}"`);
+      continue;
+    }
+    actions.push({ task, owner, priority, scheduleStr, dependsOn });
   }
 
   // Parse follow-up meetings
@@ -2783,6 +3222,39 @@ async function dispatchMeetingActions(meeting) {
   const actionJiraProject = resolveJiraProject(meeting.productId || meeting.workingDir);
   const actionProductName = (meeting.productId && products.get(meeting.productId)?.name) || meeting.productId || "";
 
+  // ── Tier classification — prevent duplicate Jira stories per meeting.
+  // Tier 1 (storyCreators: ba-agent, product-manager) own story creation.
+  // Tier 2 (enrichers: ux-agent, engineer-planner, etc.) must comment on
+  // tier-1 stories rather than create their own. Tier 2 jobs are gated on
+  // tier 1 via blockedByJobIds so they only run after stories exist.
+  const tierConfig = config.meetings?.actionItemTiers || {};
+  const storyCreators = new Set(tierConfig.storyCreators || ["ba-agent", "product-manager"]);
+  const enrichers = new Set(tierConfig.enrichers || ["ux-agent", "engineer-planner", "architect-jets", "security-agent", "qa-agent", "ui-engineer", "ask-tom-agent"]);
+  const tierOf = (owner) => {
+    if (storyCreators.has(owner)) return 1;
+    if (enrichers.has(owner)) return 2;
+    return 0;
+  };
+  const tier1Indices = [];
+  const tier2Indices = [];
+  for (let i = 0; i < actions.length; i++) {
+    const t = tierOf(actions[i].owner);
+    if (t === 1) tier1Indices.push(i);
+    else if (t === 2) tier2Indices.push(i);
+  }
+  // Auto-wire tier-2 dependencies on tier-1 (only if the agent author didn't set explicit deps).
+  if (tier1Indices.length > 0) {
+    for (const t2idx of tier2Indices) {
+      if (!actions[t2idx].dependsOn || actions[t2idx].dependsOn.length === 0) {
+        actions[t2idx].dependsOn = [...tier1Indices];
+        actions[t2idx].autoTieredDep = true;
+      }
+    }
+    if (tier2Indices.length > 0) {
+      console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: Tier-gated dispatch — tier1=[${tier1Indices.join(",")}] tier2=[${tier2Indices.join(",")}]`);
+    }
+  }
+
   // Jira auth for creating meeting-action tasks
   const { domain: jiraDomain, email: jiraEmail, apiToken: jiraApiToken } = config.jira || {};
   const canCreateJiraTasks = !!(jiraDomain && jiraEmail && jiraApiToken);
@@ -2790,7 +3262,40 @@ async function dispatchMeetingActions(meeting) {
   const jiraBaseUrl = jiraDomain ? jiraDomain.replace(/\/+$/, "") : "";
   const jiraHeaders = jiraAuthHeader ? { authorization: jiraAuthHeader } : {};
 
-  for (const action of actions) {
+  // ── Pass 1: create all Jira tasks + build all immediate job objects.
+  // Nothing is pushed to the queue yet so no job can start before deps are wired.
+  const pendingJobs = []; // { job, actionIdx } — immediate-dispatch only
+  const jobIdsByIdx = {}; // actionIdx → jobId
+  const issueKeysByIdx = {}; // actionIdx → issueKey
+
+  for (let actionIdx = 0; actionIdx < actions.length; actionIdx++) {
+    const action = actions[actionIdx];
+    const tier = tierOf(action.owner);
+    const meetingStoryLabel = `meeting:${meeting.meetingId}`;
+
+    let tierGuidance = "";
+    if (tier === 1) {
+      // Story creators: tag their stories so tier-2 enrichers can find them.
+      tierGuidance = [
+        ``,
+        `**Tier 1 — story creator role:**`,
+        `- If this action requires you to create a Jira Story, add the label \`${meetingStoryLabel}\` to it so other agents from this meeting can locate it.`,
+        `- Create ONE story per distinct scope. Do not create multiple stories for the same outcome.`,
+      ].join("\n");
+    } else if (tier === 2) {
+      // Enrichers: forbidden from creating new Stories. Must comment on tier-1 output.
+      tierGuidance = [
+        ``,
+        `**Tier 2 — enrichment role (STRICT):**`,
+        `- DO NOT create new Jira Stories. This work is enrichment of an existing Story produced by a Tier 1 agent (BA / PM) in the same meeting.`,
+        `- Find the parent Story via JQL: \`project = ${actionJiraProject} AND labels = "${meetingStoryLabel}" AND issuetype = Story\``,
+        `- Add your output (audit findings, tech assessment, UX spec, etc.) as a COMMENT on the most relevant parent Story.`,
+        `- Use a prefixed header in your comment, e.g. \`[UX-AUDIT]\`, \`[TECH-ASSESSMENT]\`, \`[SECURITY-REVIEW]\`, so other agents can find your contribution.`,
+        `- Your meeting Task (this ticket) IS your work container — close it when complete; the Story does the long-term tracking.`,
+        `- If you cannot find a parent Story (Tier 1 produced none), add your output as a comment on THIS meeting Task and flag it in your report — do not silently create a new Story.`,
+      ].join("\n");
+    }
+
     const prompt = [
       `You were in a meeting and committed to the following action item:`,
       ``,
@@ -2799,6 +3304,7 @@ async function dispatchMeetingActions(meeting) {
       `**Meeting topic:** ${meeting.topic}`,
       actionProductName ? `**Product:** ${actionProductName}` : "",
       `**Jira Project:** ${actionJiraProject} — ALL Jira issues MUST be created in project ${actionJiraProject}. Do NOT use any other project key.`,
+      tierGuidance,
       ``,
       `Meeting decisions and context:`,
       summary,
@@ -2837,7 +3343,6 @@ async function dispatchMeetingActions(meeting) {
         if (createRes.statusCode === 201) {
           try { actionIssueKey = JSON.parse(createRes.body)?.key; } catch (_) {}
           console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: Created Jira task ${actionIssueKey} for action "${action.task.substring(0, 60)}..."`);
-          // Transition to In Progress
           if (actionIssueKey) {
             await transitionIssueToInProgress(actionIssueKey);
           }
@@ -2848,12 +3353,12 @@ async function dispatchMeetingActions(meeting) {
         console.error(`[${nowIso()}] Meeting ${meeting.meetingId}: Jira task creation error: ${e.message}`);
       }
     }
+    issueKeysByIdx[actionIdx] = actionIssueKey;
 
-    // Check if this should be scheduled for later
     const scheduledAt = action.scheduleStr ? parseScheduleTime(action.scheduleStr) : null;
 
     if (scheduledAt && scheduledAt > new Date()) {
-      // Schedule for later
+      // Scheduled items fire via tickScheduler — dependencies not tracked for these
       const schedId = scheduleItem({
         type: "job",
         scheduledAt: scheduledAt.toISOString(),
@@ -2870,7 +3375,7 @@ async function dispatchMeetingActions(meeting) {
       });
       console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: Scheduled action "${action.task.substring(0, 60)}..." -> ${action.owner} for ${scheduledAt.toISOString()} (${schedId})`);
     } else {
-      // Dispatch immediately
+      // Build job object but do NOT queue yet
       const jobId = makeJobId();
       const logFile = path.join(LOG_DIR, `${jobId}.log`);
       const metaFile = path.join(LOG_DIR, `${jobId}.json`);
@@ -2899,19 +3404,66 @@ async function dispatchMeetingActions(meeting) {
         maxRetries: config.maxRetries || 3,
         source: `meeting:${meeting.meetingId}`,
         meetingAction: { task: action.task, priority: action.priority, meetingId: meeting.meetingId },
+        blockedByJobIds: [], // populated in pass 2
       };
-
       jobs.set(jobId, job);
-      db.jobs.set(job).catch(e => console.error(`[db] Failed to persist job ${jobId}: ${e.message}`));
-      queue.push({ jobId });
-    
-      console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: Dispatched action "${action.task.substring(0, 60)}..." -> ${action.owner} (job ${jobId}, issueKey: ${actionIssueKey || "none"})`);
-
-      if (config.sseEnabled) {
-        jobEmitter.emit("job:queued", { jobId, agent: action.owner, source: `meeting:${meeting.meetingId}` });
-      }
+      jobIdsByIdx[actionIdx] = jobId;
+      pendingJobs.push({ job, actionIdx });
     }
   }
+
+  // ── Pass 2: wire dependencies, then enqueue everything atomically.
+  // Set Jira blocks/is-blocked-by links and blockedByJobIds before anything can start.
+  const linkPromises = [];
+  for (const { job, actionIdx } of pendingJobs) {
+    const action = actions[actionIdx];
+    if (!action.dependsOn?.length) continue;
+
+    const validDeps = action.dependsOn.filter(depIdx => depIdx >= 0 && depIdx < actions.length && depIdx !== actionIdx);
+    if (!validDeps.length) continue;
+
+    // Jira links (fire-and-forget, best effort)
+    if (canCreateJiraTasks) {
+      for (const depIdx of validDeps) {
+        const depKey = issueKeysByIdx[depIdx];
+        const thisKey = issueKeysByIdx[actionIdx];
+        if (depKey && thisKey) {
+          linkPromises.push(
+            postJson(`${jiraBaseUrl}/rest/api/3/issueLink`, {
+              type: { name: "Blocks" },
+              inwardIssue: { key: depKey },
+              outwardIssue: { key: thisKey },
+            }, jiraHeaders).catch(e => {
+              console.error(`[${nowIso()}] Meeting ${meeting.meetingId}: Failed to set Jira link ${depKey} blocks ${thisKey}: ${e.message}`);
+            })
+          );
+        }
+      }
+    }
+
+    // In-memory dependency gate
+    job.blockedByJobIds = validDeps
+      .map(depIdx => jobIdsByIdx[depIdx])
+      .filter(Boolean);
+  }
+
+  if (linkPromises.length) {
+    await Promise.all(linkPromises);
+    console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: Set ${linkPromises.length} Jira dependency link(s)`);
+  }
+
+  // Enqueue all immediate jobs now that deps are fully wired
+  for (const { job } of pendingJobs) {
+    db.jobs.set(job).catch(e => console.error(`[db] Failed to persist job ${job.jobId}: ${e.message}`));
+    queue.push({ jobId: job.jobId });
+    const blockedNote = job.blockedByJobIds?.length ? ` [blocked by: ${job.blockedByJobIds.join(", ")}]` : "";
+    console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: Queued action "${(job.meetingAction?.task || "").substring(0, 60)}..." -> ${job.agent} (job ${job.jobId}, issueKey: ${job.issueKey || "none"}${blockedNote})`);
+    if (config.sseEnabled) {
+      jobEmitter.emit("job:queued", { jobId: job.jobId, agent: job.agent, source: job.source });
+    }
+  }
+
+  if (pendingJobs.length) tickWorker();
 
   // Schedule follow-up meetings (with dedup)
   for (const fm of followUpMeetings) {
@@ -3296,6 +3848,64 @@ function createWorktree(baseRepo, issueKey, branchName) {
 }
 
 /**
+ * Run product-specific post-create setup commands inside a fresh worktree.
+ *
+ * Drives off `product.worktreeSetup.commands` (array of strings); falls back to
+ * detecting `package.json` (runs `<pm> install --frozen-lockfile`) and
+ * `prisma/schema.prisma` (runs `<pm> exec prisma generate`).
+ *
+ * Failures are logged but do NOT throw — the implementer agent can still attempt
+ * the work and surface a clearer error than a silent missing-types failure.
+ */
+function setupWorktree(worktreeDir, baseRepo) {
+  const { execSync } = require("child_process");
+  const product = resolveProduct(baseRepo);
+  const pm = product?.techStack?.packageManager || "pnpm";
+
+  let commands = product?.worktreeSetup?.commands;
+  if (!Array.isArray(commands) || commands.length === 0) {
+    commands = [];
+    if (fs.existsSync(path.join(worktreeDir, "package.json"))) {
+      const lockArg = pm === "pnpm" ? "--frozen-lockfile" : (pm === "yarn" ? "--frozen-lockfile" : "--ci");
+      commands.push(`${pm} install ${lockArg}`);
+    }
+    // Detect Prisma anywhere in the worktree (monorepo packages/* common in EOS/CER)
+    const hasPrisma = (() => {
+      try {
+        if (fs.existsSync(path.join(worktreeDir, "prisma", "schema.prisma"))) return true;
+        const pkgs = path.join(worktreeDir, "packages");
+        if (fs.existsSync(pkgs)) {
+          for (const sub of fs.readdirSync(pkgs)) {
+            if (fs.existsSync(path.join(pkgs, sub, "prisma", "schema.prisma"))) return true;
+          }
+        }
+      } catch { /* ignore */ }
+      return false;
+    })();
+    if (hasPrisma) commands.push(`${pm} exec prisma generate`);
+  }
+
+  if (commands.length === 0) {
+    console.log(`[${nowIso()}] Worktree setup: nothing to do for ${worktreeDir}`);
+    return { ok: true, ran: [] };
+  }
+
+  const ran = [];
+  for (const cmd of commands) {
+    console.log(`[${nowIso()}] Worktree setup: running '${cmd}' in ${worktreeDir}`);
+    try {
+      execSync(cmd, { cwd: worktreeDir, encoding: "utf8", timeout: 10 * 60 * 1000, stdio: "pipe" });
+      ran.push({ cmd, ok: true });
+    } catch (e) {
+      console.error(`[${nowIso()}] Worktree setup: '${cmd}' failed: ${e.message?.slice(0, 500)}`);
+      ran.push({ cmd, ok: false, error: e.message?.slice(0, 500) });
+      // Continue — partial setup is still better than none.
+    }
+  }
+  return { ok: ran.every(r => r.ok), ran };
+}
+
+/**
  * Remove a worktree by issue key.
  */
 function removeWorktree(issueKey) {
@@ -3389,31 +3999,529 @@ function pruneWorktrees(baseRepo) {
 }
 
 /**
- * Merge worktree branch into main and clean up.
+ * Resolve the integration ("dev") branch for a base repo from product config.
+ * Defaults to "dev". A product can override via `product.json -> mergeBranch`.
+ */
+function resolveMergeBranch(baseRepo) {
+  const product = resolveProduct(baseRepo);
+  return (product && typeof product.mergeBranch === "string" && product.mergeBranch.trim())
+    ? product.mergeBranch.trim()
+    : "dev";
+}
+
+/**
+ * Resolve the git remote name for a base repo.
+ * Order:
+ *  1. `product.json -> remoteName` if set (e.g. estateos uses remote "estateos", not "origin")
+ *  2. The repo's actual remotes — prefer "origin", else first listed
+ *  3. Falls back to "origin" if detection fails
+ * Cached per baseRepo for the process lifetime.
+ */
+const _remoteNameCache = new Map();
+function resolveRemoteName(baseRepo) {
+  if (!baseRepo) return "origin";
+  if (_remoteNameCache.has(baseRepo)) return _remoteNameCache.get(baseRepo);
+
+  const product = resolveProduct(baseRepo);
+  if (product && typeof product.remoteName === "string" && product.remoteName.trim()) {
+    const name = product.remoteName.trim();
+    _remoteNameCache.set(baseRepo, name);
+    return name;
+  }
+
+  const { execSync } = require("child_process");
+  let name = "origin";
+  try {
+    const out = execSync("git remote", { cwd: baseRepo, encoding: "utf8", timeout: 5000, stdio: "pipe" }).trim();
+    const remotes = out.split("\n").map(s => s.trim()).filter(Boolean);
+    if (remotes.length > 0) {
+      name = remotes.includes("origin") ? "origin" : remotes[0];
+    }
+  } catch (e) {
+    console.warn(`[${nowIso()}] resolveRemoteName: detection failed for ${baseRepo}, falling back to "origin": ${e.message}`);
+  }
+  _remoteNameCache.set(baseRepo, name);
+  return name;
+}
+
+/**
+ * Ensure the integration branch exists locally and on origin.
+ * If origin/<mergeBranch> is missing, create it from origin/main and push.
+ * Idempotent: safe to call on every merge.
+ */
+function ensureIntegrationBranch(baseRepo, mergeBranch) {
+  const { execSync } = require("child_process");
+  const remote = resolveRemoteName(baseRepo);
+  try {
+    execSync(`git fetch ${remote} --prune`, { cwd: baseRepo, encoding: "utf8", timeout: 60000, stdio: "pipe" });
+  } catch (e) {
+    console.warn(`[${nowIso()}] ensureIntegrationBranch: fetch failed for ${baseRepo}: ${e.message}`);
+  }
+
+  let remoteHasIt = false;
+  try {
+    const out = execSync(`git ls-remote --heads ${remote} ${mergeBranch}`, { cwd: baseRepo, encoding: "utf8", timeout: 15000, stdio: "pipe" }).trim();
+    remoteHasIt = !!out;
+  } catch { /* assume not */ }
+
+  if (!remoteHasIt) {
+    console.log(`[${nowIso()}] Bootstrapping integration branch '${mergeBranch}' from ${remote}/main in ${baseRepo}`);
+    try {
+      // Create local branch from <remote>/main if missing
+      try { execSync(`git rev-parse --verify ${mergeBranch}`, { cwd: baseRepo, encoding: "utf8", timeout: 5000, stdio: "pipe" }); }
+      catch {
+        execSync(`git branch ${mergeBranch} ${remote}/main`, { cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: "pipe" });
+      }
+      execSync(`git push -u ${remote} ${mergeBranch}`, { cwd: baseRepo, encoding: "utf8", timeout: 60000, stdio: "pipe" });
+    } catch (e) {
+      throw new Error(`ensureIntegrationBranch failed to bootstrap '${mergeBranch}': ${e.message}`);
+    }
+  } else {
+    // Remote has it — ensure local tracking exists
+    try {
+      execSync(`git rev-parse --verify ${mergeBranch}`, { cwd: baseRepo, encoding: "utf8", timeout: 5000, stdio: "pipe" });
+    } catch {
+      try {
+        execSync(`git branch --track ${mergeBranch} ${remote}/${mergeBranch}`, { cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: "pipe" });
+      } catch (e) {
+        console.warn(`[${nowIso()}] ensureIntegrationBranch: local track create warned: ${e.message}`);
+      }
+    }
+  }
+}
+
+/**
+ * Merge a feature branch into the integration ("dev") branch via a temp worktree
+ * checked out to dev (refs are shared across worktrees, so feature branches are
+ * visible). Fast-forward by default, falls back to --no-ff if dev has diverged.
+ * On success: pushes dev, deletes the feature branch locally + on origin.
+ *
+ * Returns { branch, mergeBranch, devSha, mode } where mode is "ff" or "no-ff".
+ * Throws on conflict (with .conflictContext) or other failure.
+ */
+function mergeBranchIntoDev(baseRepo, featureBranch, issueKey) {
+  const { execSync } = require("child_process");
+  if (!baseRepo || !featureBranch) throw new Error("mergeBranchIntoDev: baseRepo and featureBranch required");
+
+  const mergeBranch = resolveMergeBranch(baseRepo);
+  const remote = resolveRemoteName(baseRepo);
+  ensureIntegrationBranch(baseRepo, mergeBranch);
+
+  // Push the feature branch first so the merge result has a remote audit trail
+  // and so failure-path safety is preserved even if the merge itself fails.
+  try {
+    execSync(`git push -u ${remote} ${featureBranch}`, { cwd: baseRepo, encoding: "utf8", timeout: 60000, stdio: "pipe" });
+  } catch (e) {
+    console.warn(`[${nowIso()}] mergeBranchIntoDev: feature-branch push failed (continuing to merge): ${e.message}`);
+  }
+
+  // Verify there is something to merge (branch ahead of mergeBranch)
+  let ahead = 0;
+  try {
+    ahead = parseInt(execSync(`git rev-list ${mergeBranch}..${featureBranch} --count`, { cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: "pipe" }).trim()) || 0;
+  } catch {
+    try {
+      ahead = parseInt(execSync(`git rev-list ${remote}/${mergeBranch}..${featureBranch} --count`, { cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: "pipe" }).trim()) || 0;
+    } catch {}
+  }
+  if (ahead === 0) {
+    console.log(`[${nowIso()}] mergeBranchIntoDev: ${featureBranch} has 0 commits ahead of ${mergeBranch}, skipping`);
+    return null;
+  }
+
+  // git refuses to check out a branch that's already checked out in another
+  // worktree. Detect that case and merge in-place there instead of trying to
+  // add a fresh worktree (which would fail with "fatal: '<branch>' is already
+  // checked out at ..."). The base repo itself counts as a worktree.
+  let existingWorktree = null;
+  try {
+    const wt = execSync("git worktree list --porcelain", { cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: "pipe" });
+    let cur = {};
+    for (const line of wt.split("\n")) {
+      if (line.startsWith("worktree ")) cur = { path: line.slice(9).trim() };
+      else if (line.startsWith("branch ")) cur.branch = line.slice(7).trim();
+      else if (line === "" && cur.path) {
+        if (cur.branch === `refs/heads/${mergeBranch}`) { existingWorktree = cur.path; break; }
+        cur = {};
+      }
+    }
+  } catch (e) {
+    console.warn(`[${nowIso()}] mergeBranchIntoDev: worktree list failed (continuing): ${e.message}`);
+  }
+
+  const os = require("os");
+  const reuseWorktree = !!existingWorktree;
+  const tmpWorktree = reuseWorktree ? existingWorktree : path.join(os.tmpdir(), `merge-${issueKey || featureBranch}-${Date.now()}`);
+  console.log(`[${nowIso()}] mergeBranchIntoDev: ${reuseWorktree ? "reusing existing" : "temp"} worktree at ${tmpWorktree} for ${featureBranch} -> ${mergeBranch}`);
+
+  try {
+    if (!reuseWorktree) {
+      execSync(`git worktree add "${tmpWorktree}" ${mergeBranch}`, { cwd: baseRepo, encoding: "utf8", timeout: 30000, stdio: "pipe" });
+    } else {
+      // Existing worktree must have no tracked changes; merging would fail mid-merge.
+      // Untracked files (??) are fine — git merge refuses on its own only if they'd be
+      // overwritten, and pipeline artifacts (CTX-*.md, REPORT-*.md) routinely sit here.
+      const status = execSync("git status --porcelain", { cwd: tmpWorktree, encoding: "utf8", timeout: 10000, stdio: "pipe" });
+      const trackedDirty = status.split("\n").filter(l => l && !l.startsWith("??")).join("\n").trim();
+      if (trackedDirty) {
+        throw new Error(`mergeBranchIntoDev: ${tmpWorktree} (on ${mergeBranch}) has uncommitted tracked changes — refusing to merge into dirty tree:\n${trackedDirty}`);
+      }
+    }
+    try {
+      execSync(`git pull --ff-only ${remote} ${mergeBranch}`, { cwd: tmpWorktree, encoding: "utf8", timeout: 60000, stdio: "pipe" });
+    } catch (e) {
+      console.warn(`[${nowIso()}] mergeBranchIntoDev: ff-only pull of ${mergeBranch} failed: ${e.message}`);
+    }
+
+    let mode = "ff";
+    try {
+      execSync(`git merge --ff-only ${featureBranch}`, { cwd: tmpWorktree, encoding: "utf8", timeout: 30000, stdio: "pipe" });
+    } catch (ffErr) {
+      // Fallback to --no-ff so a merge commit captures the integration point
+      mode = "no-ff";
+      try {
+        execSync(
+          `git merge ${featureBranch} --no-ff -m "Merge ${featureBranch} into ${mergeBranch}${issueKey ? ` (${issueKey})` : ""}"`,
+          {
+            cwd: tmpWorktree, encoding: "utf8", timeout: 30000, stdio: "pipe",
+            env: { ...process.env, GIT_AUTHOR_NAME: "CertPilot Runner", GIT_AUTHOR_EMAIL: "runner@certpilot.dev", GIT_COMMITTER_NAME: "CertPilot Runner", GIT_COMMITTER_EMAIL: "runner@certpilot.dev" }
+          }
+        );
+      } catch (mergeErr) {
+        try { execSync("git merge --abort", { cwd: tmpWorktree, encoding: "utf8", timeout: 5000, stdio: "pipe" }); } catch {}
+
+        let devLog = "", branchLog = "", diffStat = "";
+        try {
+          devLog = execSync(`git log ${featureBranch}..${mergeBranch} --oneline -20`, { cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: "pipe" }).trim();
+          branchLog = execSync(`git log ${mergeBranch}..${featureBranch} --oneline -20`, { cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: "pipe" }).trim();
+          diffStat = execSync(`git diff ${mergeBranch}...${featureBranch} --stat`, { cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: "pipe" }).trim();
+        } catch {}
+
+        const err = new Error(`MERGE_CONFLICT:${featureBranch}`);
+        err.conflictContext = { branchName: featureBranch, mergeBranch, mainLog: devLog, branchLog, diffStat, issueKey };
+        throw err;
+      }
+    }
+
+    // Push the integration branch
+    execSync(`git push ${remote} ${mergeBranch}`, { cwd: tmpWorktree, encoding: "utf8", timeout: 60000, stdio: "pipe" });
+    const devSha = execSync(`git rev-parse HEAD`, { cwd: tmpWorktree, encoding: "utf8", timeout: 5000, stdio: "pipe" }).trim();
+    console.log(`[${nowIso()}] mergeBranchIntoDev: pushed ${mergeBranch}@${devSha.slice(0,8)} (${mode})`);
+
+    // Delete the feature branch on the remote (best-effort)
+    try {
+      execSync(`git push ${remote} --delete ${featureBranch}`, { cwd: baseRepo, encoding: "utf8", timeout: 30000, stdio: "pipe" });
+    } catch (e) {
+      console.warn(`[${nowIso()}] mergeBranchIntoDev: remote branch delete warning for ${featureBranch}: ${e.message}`);
+    }
+
+    jobEmitter.emit("pipeline:auto-merged", {
+      pipelineId: null, issueKey, branch: featureBranch, mergeBranch, devSha, mode,
+    });
+
+    if (issueKey) {
+      const comment = [
+        `[AUTO-MERGED-TO-DEV] Branch \`${featureBranch}\` merged into \`${mergeBranch}\` (${mode}) at ${devSha.slice(0, 8)}.`,
+        ``,
+        `Open a PR \`${mergeBranch}\` -> \`main\` when ready to deploy. The feature branch has been deleted locally and on ${remote}.`,
+      ].join("\n");
+      Promise.resolve().then(() => issueTracker.addComment(issueKey, comment, "runner")).catch(e => {
+        console.warn(`[${nowIso()}] mergeBranchIntoDev: Jira comment failed for ${issueKey}: ${e.message}`);
+      });
+    }
+    return { branch: featureBranch, mergeBranch, devSha, mode };
+  } finally {
+    if (!reuseWorktree) {
+      try {
+        execSync(`git worktree remove "${tmpWorktree}" --force`, { cwd: baseRepo, encoding: "utf8", timeout: 15000, stdio: "pipe" });
+      } catch (e) {
+        console.warn(`[${nowIso()}] mergeBranchIntoDev: temp worktree cleanup warning: ${e.message}`);
+        try { fs.rmSync(tmpWorktree, { recursive: true, force: true }); } catch {}
+        try { execSync(`git worktree prune`, { cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: "pipe" }); } catch {}
+      }
+    }
+  }
+}
+
+/**
+ * Merge a worktree branch into the integration ("dev") branch and reap the worktree.
+ * Synchronous: by the time this returns, dev has been pushed and the local feature
+ * branch + worktree have been removed.
+ * Returns { branch, mergeBranch, devSha, mode }.
  */
 function mergeWorktree(issueKey) {
-  const { execSync } = require("child_process");
   const record = Array.from(worktrees.values()).find(w => w.issueKey === issueKey);
   if (!record) throw new Error(`No worktree found for ${issueKey}`);
+  if (!record.baseRepo || !record.branch) throw new Error(`Worktree ${record.id} has no baseRepo/branch`);
 
-  // Merge into main
-  execSync("git checkout main", { cwd: record.baseRepo, encoding: "utf8", timeout: 10000 });
-  const mergeOutput = execSync(`git merge ${record.branch} --no-ff -m "Merge ${record.branch} (${issueKey})"`, {
-    cwd: record.baseRepo, encoding: "utf8", timeout: 30000
+  const result = mergeBranchIntoDev(record.baseRepo, record.branch, issueKey);
+  if (!result) throw new Error(`No commits to merge for ${issueKey}`);
+
+  record.status = "merged";
+  record.mergedTo = result.mergeBranch;
+  record.mergedSha = result.devSha;
+  db.worktrees.set(record).catch(e => console.error('[db] worktree update failed: ' + e.message));
+
+  jobEmitter.emit("worktree:merged", {
+    id: record.id, issueKey, branch: record.branch, mergeBranch: result.mergeBranch, devSha: result.devSha,
   });
 
-  // Mark as merged and remove worktree
-  record.status = "merged";
-
-
+  // Reap the worktree synchronously now that the branch is on dev
   try {
     removeWorktree(issueKey);
   } catch (e) {
-    console.log(`[${nowIso()}] Post-merge worktree cleanup warning: ${e.message}`);
+    console.warn(`[${nowIso()}] mergeWorktree: post-merge worktree removal warning for ${issueKey}: ${e.message}`);
   }
 
-  jobEmitter.emit("worktree:merged", { id: record.id, issueKey, branch: record.branch });
-  return { branch: record.branch, output: String(mergeOutput).trim() };
+  return result;
+}
+
+/**
+ * Preserve dirty workingDir state by stashing onto a safety branch and pushing.
+ * Called at pipeline creation so the user's in-progress work is never overwritten.
+ * Returns { stashedBranch, fileCount } when work was preserved, or null when clean.
+ */
+function stashDirtyWorkingDir(workingDir, issueKey) {
+  const { execSync } = require("child_process");
+  if (!workingDir) return null;
+  let status = "";
+  try {
+    status = execSync("git status --porcelain", { cwd: workingDir, encoding: "utf8", timeout: 10000, stdio: "pipe" }).trim();
+  } catch (e) {
+    console.warn(`[${nowIso()}] stashDirtyWorkingDir: status check failed for ${workingDir}: ${e.message}`);
+    return null;
+  }
+  if (!status) return null;
+
+  const fileCount = status.split("\n").filter(Boolean).length;
+  const ts = new Date().toISOString().replace(/[-:]/g, "").split(".")[0]; // 20260426T091500
+  const stashedBranch = `safety/main-wip-${ts}`;
+  console.log(`[${nowIso()}] Stashing ${fileCount} dirty file(s) in ${workingDir} to ${stashedBranch} before pipeline ${issueKey || ''}`);
+
+  try {
+    // Determine current branch (typically main); we'll come back to it
+    const currentBranch = execSync("git branch --show-current", { cwd: workingDir, encoding: "utf8", timeout: 5000, stdio: "pipe" }).trim() || "main";
+    execSync(`git checkout -b ${stashedBranch}`, { cwd: workingDir, encoding: "utf8", timeout: 10000, stdio: "pipe" });
+    execSync("git add -A", { cwd: workingDir, encoding: "utf8", timeout: 30000, stdio: "pipe" });
+    execSync(
+      `git commit -m "safety: in-progress WIP stashed before pipeline${issueKey ? ` ${issueKey}` : ''}\n\nAuto-stashed by CertPilot Runner. Review and merge or discard."`,
+      {
+        cwd: workingDir, encoding: "utf8", timeout: 30000, stdio: "pipe",
+        env: { ...process.env, GIT_AUTHOR_NAME: "CertPilot Runner", GIT_AUTHOR_EMAIL: "runner@certpilot.dev", GIT_COMMITTER_NAME: "CertPilot Runner", GIT_COMMITTER_EMAIL: "runner@certpilot.dev" }
+      }
+    );
+    try {
+      const remote = resolveRemoteName(workingDir);
+      execSync(`git push -u ${remote} ${stashedBranch}`, { cwd: workingDir, encoding: "utf8", timeout: 60000, stdio: "pipe" });
+      console.log(`[${nowIso()}] Pushed safety branch ${stashedBranch}`);
+    } catch (pushErr) {
+      console.warn(`[${nowIso()}] Safety branch push failed (kept locally): ${pushErr.message}`);
+    }
+    execSync(`git checkout ${currentBranch}`, { cwd: workingDir, encoding: "utf8", timeout: 10000, stdio: "pipe" });
+    jobEmitter.emit("workingdir:safety-stashed", { workingDir, stashedBranch, fileCount, issueKey });
+    return { stashedBranch, fileCount };
+  } catch (e) {
+    console.error(`[${nowIso()}] stashDirtyWorkingDir failed for ${workingDir}: ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * Locate the pipeline's feature branch in the base repo and merge it into the
+ * integration ("dev") branch via mergeBranchIntoDev. Used by the non-worktree path.
+ * Returns { branch, mergeBranch, devSha, mode } or null when nothing to merge.
+ */
+function mergePipelineBranchIntoDev(pipeline) {
+  const { execSync } = require("child_process");
+  const baseRepo = pipeline.workingDir; // non-worktree: agents committed in workingDir
+  if (!baseRepo) return null;
+  const issueKey = pipeline.issueKey;
+  if (!issueKey) return null;
+
+  const candidateBranches = [
+    pipeline.worktreeBranch,
+    `${issueKey}-auto`,
+    `${issueKey.toLowerCase()}-auto`,
+    `feature/${issueKey}`,
+    `fix/${issueKey}`,
+    issueKey.toLowerCase(),
+  ].filter(Boolean);
+
+  let branchName = null;
+  for (const candidate of candidateBranches) {
+    try {
+      execSync(`git rev-parse --verify ${candidate}`, { cwd: baseRepo, encoding: "utf8", timeout: 5000, stdio: "pipe" });
+      branchName = candidate;
+      break;
+    } catch { /* try next */ }
+  }
+  if (!branchName) {
+    console.log(`[${nowIso()}] mergePipelineBranchIntoDev: no matching branch found for ${issueKey} in ${baseRepo}`);
+    return null;
+  }
+
+  return mergeBranchIntoDev(baseRepo, branchName, issueKey);
+}
+
+/**
+ * On pipeline failure, preserve work by pushing the branch (no PR — just keep it on remote).
+ * Posts an [AUTO-IMPLEMENT-FAILED] Jira comment with the branch name so a human can pick it up.
+ */
+/**
+ * d3a: Detect "blocked on red base" — quality-gate failures whose failing
+ * test files have zero overlap with the pipeline's diff. Heuristic:
+ * if the implementer hasn't touched these files, they were red on dev
+ * before the pipeline started. Halts fix-loop retry burn.
+ *
+ * Conservative: only consults `test` failures; needs ≥1 parsed failing
+ * file path; needs a non-empty diff to compare against.
+ */
+function detectInheritedRedBase(pipeline, phase, job) {
+  const { execSync } = require("child_process");
+  const cwd = pipeline.worktreePath || pipeline.workingDir || job.workingDir;
+  if (!cwd || !fs.existsSync(cwd)) return { inherited: false, reason: "no worktree" };
+
+  const qgFailure = job.qualityGateFailure || {};
+  if (qgFailure.failedCheck !== "test") return { inherited: false, reason: "not a test failure" };
+  const output = qgFailure.failureOutput || job.error || "";
+  if (!output) return { inherited: false, reason: "no output" };
+
+  const failingFiles = new Set();
+  const failRegex = /(?:^|\s)(?:FAIL|❯|×)\s+([\w./@-]+\.(?:test|spec)\.[tj]sx?)/g;
+  let m;
+  while ((m = failRegex.exec(output)) !== null) failingFiles.add(m[1]);
+  if (failingFiles.size === 0) return { inherited: false, reason: "no failing files parsed" };
+
+  let changedFiles = new Set();
+  let basis = null;
+  for (const ref of ["origin/dev", "origin/main"]) {
+    try {
+      const out = execSync(`git diff --name-only $(git merge-base HEAD ${ref})..HEAD`, {
+        cwd, encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"], shell: "/bin/bash"
+      });
+      out.split("\n").map(s => s.trim()).filter(Boolean).forEach(f => changedFiles.add(f));
+      basis = ref;
+      if (changedFiles.size > 0) break;
+    } catch {}
+  }
+  if (changedFiles.size === 0) return { inherited: false, reason: "no diff resolvable" };
+
+  for (const f of failingFiles) {
+    if (changedFiles.has(f)) return { inherited: false, reason: `overlap: ${f}` };
+  }
+  return {
+    inherited: true,
+    failingFiles: Array.from(failingFiles),
+    changedFiles: Array.from(changedFiles),
+    basis,
+  };
+}
+
+function preserveBranchOnFailure(pipeline, phase) {
+  const { execSync } = require("child_process");
+  const cwd = pipeline.worktreePath || pipeline.workingDir;
+  if (!cwd || !pipeline.issueKey) return null;
+
+  let branchName = pipeline.worktreeBranch || `${pipeline.issueKey}-auto`;
+  try {
+    execSync(`git rev-parse --verify ${branchName}`, { cwd, encoding: "utf8", timeout: 5000, stdio: "pipe" });
+  } catch {
+    // Fall back to current branch if the canonical one isn't there
+    try {
+      branchName = execSync("git branch --show-current", { cwd, encoding: "utf8", timeout: 5000, stdio: "pipe" }).trim();
+    } catch { return null; }
+    if (!branchName || branchName === "main") return null;
+  }
+
+  // Skip if no commits ahead of main
+  let ahead = 0;
+  try {
+    ahead = parseInt(execSync(`git rev-list main..${branchName} --count`, { cwd, encoding: "utf8", timeout: 5000, stdio: "pipe" }).trim()) || 0;
+  } catch {}
+  if (ahead === 0) {
+    console.log(`[${nowIso()}] No commits to preserve for failed pipeline ${pipeline.pipelineId}`);
+    return null;
+  }
+
+  let pushedRemote = false;
+  const remote = resolveRemoteName(cwd);
+  try {
+    execSync(`git push -u ${remote} ${branchName}`, { cwd, encoding: "utf8", timeout: 60000, stdio: "pipe" });
+    pushedRemote = true;
+    console.log(`[${nowIso()}] Preserved failed-pipeline branch ${branchName} to ${remote}`);
+  } catch (e) {
+    console.warn(`[${nowIso()}] Failed to push preservation branch ${branchName}: ${e.message}`);
+  }
+
+  // Best-effort Jira note (non-blocking)
+  const jiraComment = [
+    `[AUTO-IMPLEMENT-FAILED] Pipeline ${pipeline.pipelineId} failed at phase "${phase?.name || 'unknown'}".`,
+    ``,
+    `Branch ${pushedRemote ? `pushed to ${remote}` : 'kept locally'}: \`${branchName}\` (${ahead} commit${ahead === 1 ? '' : 's'} ahead of main).`,
+    `Worktree retained for inspection: ${pipeline.worktreePath || '(no worktree)'}.`,
+    `Error: ${pipeline.error || phase?.error || 'unknown'}`,
+    ``,
+    `No PR was opened. A human can review the branch and either complete it or discard it.`,
+  ].join("\n");
+  Promise.resolve().then(() => issueTracker.addComment(pipeline.issueKey, jiraComment, "runner")).catch(e => {
+    console.warn(`[${nowIso()}] preserveBranchOnFailure: Jira comment failed: ${e.message}`);
+  });
+
+  jobEmitter.emit("pipeline:branch-preserved", {
+    pipelineId: pipeline.pipelineId, issueKey: pipeline.issueKey, branch: branchName, pushedRemote, ahead,
+  });
+  return { branch: branchName, pushedRemote, ahead };
+}
+
+/**
+ * Periodic reconciler: reap stale worktree records.
+ * Two-condition reaping: (a) the local worktree directory is missing, OR
+ * (b) the feature branch's LOCAL ref is gone (someone deleted the branch).
+ *
+ * NOTE: We deliberately do NOT check the remote ref here. Fresh pipelines run
+ * for many minutes on a local-only branch before any push happens (EOS-621
+ * never pushed at all). Treating remote-absence as "gone" reaped active
+ * worktrees mid-pipeline, which then broke the final merge step with
+ * "No worktree found" (see EOS-598/EOS-621 incident, 2026-04-26).
+ */
+function reconcileMergedWorktrees() {
+  const { execSync } = require("child_process");
+  for (const [, wt] of Array.from(worktrees.entries())) {
+    if (!wt || !wt.path || !wt.branch || !wt.baseRepo) continue;
+    if (wt.status === "merged" || wt.status === "deleted") {
+      // Already-merged record: directory was reaped synchronously, drop the row
+      try {
+        worktrees.delete(wt.id);
+        db.worktrees.delete(wt.id).catch(e => console.error('[db] worktree delete failed: ' + e.message));
+      } catch {}
+      continue;
+    }
+
+    const dirGone = !fs.existsSync(wt.path);
+    let branchGone = false;
+    try {
+      execSync(`git show-ref --verify --quiet refs/heads/${wt.branch}`, { cwd: wt.baseRepo, timeout: 15000, stdio: "pipe" });
+      // exit 0 → local branch ref exists → branch is alive
+    } catch (e) {
+      // Non-zero exit means the local branch ref is missing.
+      // Distinguish "missing" (exit 1) from "I/O or timeout error" — only treat the former as gone.
+      if (e && (e.status === 1 || e.code === 1)) branchGone = true;
+    }
+
+    if (!dirGone && !branchGone) continue;
+
+    try {
+      console.log(`[${nowIso()}] Reconciler: reaping worktree for ${wt.issueKey} (dirGone=${dirGone}, branchGone=${branchGone})`);
+      removeWorktree(wt.issueKey);
+    } catch (e) {
+      console.warn(`[${nowIso()}] Reconciler: removeWorktree failed for ${wt.issueKey}: ${e.message}`);
+      // Drop the record anyway so it doesn't pile up
+      try {
+        worktrees.delete(wt.id);
+        db.worktrees.delete(wt.id).catch(err => console.error('[db] worktree delete failed: ' + err.message));
+      } catch {}
+    }
+  }
 }
 
 /**
@@ -3431,6 +4539,24 @@ async function createPipeline(issueKey, pipelineType, options = {}) {
   for (const existing of pipelines.values()) {
     if (existing.issueKey === String(issueKey) && !["completed", "failed"].includes(existing.status)) {
       throw new Error(`Pipeline ${existing.pipelineId} already active for ${issueKey} (status: ${existing.status})`);
+    }
+  }
+
+  // Pre-flight: if the workingDir has uncommitted changes, push them to a safety branch
+  // so the user's in-progress work is preserved before the pipeline (or worktree creation)
+  // potentially disturbs it. Skipping this check on subtask pipelines whose parent already
+  // has a worktree, since they'll share that worktree and never touch the base repo.
+  const targetWorkingDir = options.workingDir || DEFAULT_WORKING_DIR;
+  const parentHasActiveWorktree = options.parentKey && Array.from(worktrees.values())
+    .some(w => w.issueKey === options.parentKey && w.status === "active");
+  if (!parentHasActiveWorktree) {
+    try {
+      const stashResult = stashDirtyWorkingDir(targetWorkingDir, issueKey);
+      if (stashResult) {
+        console.log(`[${nowIso()}] Pre-flight stash: ${stashResult.fileCount} file(s) preserved on ${stashResult.stashedBranch} for ${issueKey}`);
+      }
+    } catch (e) {
+      console.warn(`[${nowIso()}] Pre-flight stash failed for ${issueKey}: ${e.message} — proceeding anyway`);
     }
   }
 
@@ -3516,22 +4642,14 @@ async function createPipeline(issueKey, pipelineType, options = {}) {
 
   console.log(`[${nowIso()}] Pipeline ${pipelineId} created: type=${pipelineType} issueKey=${issueKey} phases=${phases.length}`);
 
-  // Seed context bridge with initial context (e.g. triage output) if provided
+  // Defer context bridge seeding until the worktree exists — writing to
+  // pipeline.workingDir (base repo on dev) leaks CTX-*.md as untracked files
+  // on the dev branch's working tree.
   if (options.initialContext) {
-    try {
-      const ctxDir = path.join(pipeline.workingDir, "docs", "sdlc", "context");
-      fs.mkdirSync(ctxDir, { recursive: true });
-      const ctxFile = path.join(ctxDir, `CTX-${pipeline.issueKey}.md`);
-      pipeline.contextBridgeFile = ctxFile;
-      const header = `# Context Bridge: ${pipeline.issueKey}\n> Pipeline: ${pipeline.pipelineType}\n> Created: ${nowIso()}\n\n`;
-      const agentName = options.initialContextAgent || "unknown";
-      const contextText = options.initialContext.substring(0, 2000);
-      const section = `## Phase: triage (pre-pipeline)\n- **Agent**: ${agentName}\n- **Completed**: ${nowIso()}\n\n### Triage Output\n${contextText}\n\n`;
-      fs.writeFileSync(ctxFile, header + section, "utf8");
-      console.log(`[${nowIso()}] Pipeline ${pipelineId} context bridge seeded with ${agentName} output`);
-    } catch (e) {
-      console.error(`[${nowIso()}] Failed to seed context bridge for pipeline ${pipelineId}: ${e.message}`);
-    }
+    pipeline.pendingInitialContext = {
+      text: options.initialContext.substring(0, 2000),
+      agent: options.initialContextAgent || "unknown",
+    };
   }
 
   // Start the first non-skipped phase
@@ -3601,6 +4719,23 @@ function buildPipelinePrompt(pipeline, phase, basePrompt) {
   parts.push(`You are the ${phase.agent} agent running as phase "${phase.name}" in a ${pipeline.pipelineType} pipeline.`);
   parts.push(`Issue: ${pipeline.issueKey}`);
   parts.push(`Working directory: ${pipeline.workingDir}`);
+
+  // Branch context: tell agents which branch they're reviewing/working on
+  // After implementation, the branch stays checked out — QA and reviewers run on it
+  if (pipeline.mergedBranch) {
+    parts.push(`Branch: ${pipeline.mergedBranch} (already merged to main)`);
+  } else {
+    // Detect current branch from the working directory
+    try {
+      const branch = execSync("git branch --show-current", { cwd: pipeline.worktreePath || pipeline.workingDir, encoding: "utf8" }).trim();
+      if (branch && branch !== "main" && branch !== "master") {
+        parts.push(`Branch: ${branch} (NOT yet merged to main — merge happens only after QA passes)`);
+        if (phase.name === "verify") {
+          parts.push("You are reviewing code ON THE IMPLEMENTATION BRANCH. If you find issues, they will be fixed on this same branch and you will re-verify.");
+        }
+      }
+    } catch { /* ignore — agent proceeds without branch info */ }
+  }
   parts.push("");
 
   if (phase.gate) {
@@ -3618,7 +4753,10 @@ function buildPipelinePrompt(pipeline, phase, basePrompt) {
   if (phase.fixLoopContext) {
     const ctx = phase.fixLoopContext;
     parts.push("## ⚠️ Fix-Loop: Previous Attempt Failed");
-    parts.push(`This is fix-loop attempt ${ctx.attempt}. Your previous implementation failed the quality gate.`);
+    const source = ctx.sourcePhase === "verify"
+      ? `QA verification found issues. This is verify-fix-loop attempt ${ctx.attempt}. Fix the QA findings on this branch — do NOT create a new branch.`
+      : `This is fix-loop attempt ${ctx.attempt}. Your previous implementation failed the quality gate.`;
+    parts.push(source);
     parts.push("");
     if (ctx.failedCheck) parts.push(`**Failed check:** ${ctx.failedCheck}`);
     if (ctx.failedCommand) parts.push(`**Command:** ${ctx.failedCommand}`);
@@ -3693,7 +4831,34 @@ async function executePipelinePhase(pipeline, phaseIndex) {
       // Link worktree to pipeline
       const wtRecord = worktrees.get(wt.id);
       if (wtRecord) wtRecord.pipelineId = pipeline.pipelineId;
-    
+      // Run product-specific install/generate so the implementer doesn't fail
+      // on missing node_modules or ungenerated Prisma client (was #1 cause of
+      // EOS pipelines stuck in fix-loop-forever on type-check).
+      try {
+        const setup = setupWorktree(wt.path, pipeline.workingDir);
+        pipeline.worktreeSetup = setup;
+      } catch (e) {
+        console.error(`[${nowIso()}] Worktree setup error (non-fatal): ${e.message}`);
+      }
+
+      // Flush any deferred initial-context seed into the worktree.
+      if (pipeline.pendingInitialContext) {
+        try {
+          const seedDir = path.join(pipeline.worktreePath, "docs", "sdlc", "context");
+          fs.mkdirSync(seedDir, { recursive: true });
+          const seedFile = path.join(seedDir, `CTX-${pipeline.issueKey}.md`);
+          const header = `# Context Bridge: ${pipeline.issueKey}\n> Pipeline: ${pipeline.pipelineType}\n> Created: ${nowIso()}\n\n`;
+          const { text, agent } = pipeline.pendingInitialContext;
+          const section = `## Phase: triage (pre-pipeline)\n- **Agent**: ${agent}\n- **Completed**: ${nowIso()}\n\n### Triage Output\n${text}\n\n`;
+          fs.writeFileSync(seedFile, header + section, "utf8");
+          pipeline.contextBridgeFile = seedFile;
+          console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} context bridge seeded with ${agent} output (worktree)`);
+        } catch (e) {
+          console.error(`[${nowIso()}] Failed to seed context bridge for pipeline ${pipeline.pipelineId}: ${e.message}`);
+        }
+        delete pipeline.pendingInitialContext;
+      }
+
     } catch (e) {
       console.error(`[${nowIso()}] Worktree creation failed for ${pipeline.issueKey}: ${e.message}`);
       // Fall through — pipeline will use base workingDir
@@ -3705,7 +4870,10 @@ async function executePipelinePhase(pipeline, phaseIndex) {
 
   const basePrompt = `You are running as part of the ${pipeline.pipelineType} pipeline for Jira issue ${pipeline.issueKey}.\n` +
     `Phase: ${phase.name}\nAgent: ${phase.agent}\n\n` +
-    `Fetch the full Jira issue ${pipeline.issueKey} via MCP tools for complete context, then execute your phase responsibilities.`;
+    `Fetch the full Jira issue ${pipeline.issueKey} via MCP tools for complete context. ` +
+    `ALSO fetch every subtask of ${pipeline.issueKey} and read each one in full — subtasks are usually more prescriptive than the parent and define the actual work that needs doing.\n\n` +
+    `If open subtasks exist that prescribe the work for this phase, do NOT do the work yourself. Instead, dispatch those subtasks to the appropriate agents (via [CREATE-SUBTASKS] routing labels if they need rerouting, or by ensuring the existing agent labels will pick them up) and let them execute. Your job in that case is to coordinate, not to implement.\n\n` +
+    `Only do the work directly if there are no relevant subtasks, or the subtasks are already done/closed and the parent still requires action.`;
 
   const prompt = buildPipelinePrompt(pipeline, phase, basePrompt);
 
@@ -4076,7 +5244,11 @@ function formatContextSection(phaseName, agent, status, jobId, extracted) {
  */
 function updateContextBridge(pipeline, phase, job) {
   try {
-    const ctxDir = path.join(pipeline.workingDir, "docs", "sdlc", "context");
+    // Write into the worktree so CTX-*.md doesn't leak as untracked file on
+    // dev. Falls back to the base repo only when no worktree was created
+    // (e.g. non-code phases before the first worktree-bearing phase).
+    const ctxRoot = pipeline.worktreePath || pipeline.workingDir;
+    const ctxDir = path.join(ctxRoot, "docs", "sdlc", "context");
     fs.mkdirSync(ctxDir, { recursive: true });
 
     const ctxFile = path.join(ctxDir, `CTX-${pipeline.issueKey}.md`);
@@ -4089,7 +5261,9 @@ function updateContextBridge(pipeline, phase, job) {
     const extracted = extractStructuredSummary(phase.name, result, maxWords);
     const section = formatContextSection(phase.name, phase.agent, job.status, job.jobId, extracted);
 
-    // Create or append
+    // Create or append. If a deferred initial-context seed survived (worktree
+    // creation failed or was disabled), include it as the first section so
+    // the seed isn't lost.
     if (!fs.existsSync(ctxFile)) {
       const header = [
         `# Context Bridge: ${pipeline.issueKey}`,
@@ -4097,7 +5271,13 @@ function updateContextBridge(pipeline, phase, job) {
         `> Created: ${nowIso()}`,
         "",
       ].join("\n");
-      fs.writeFileSync(ctxFile, header + section, "utf8");
+      let seedSection = "";
+      if (pipeline.pendingInitialContext) {
+        const { text, agent } = pipeline.pendingInitialContext;
+        seedSection = `## Phase: triage (pre-pipeline)\n- **Agent**: ${agent}\n- **Completed**: ${nowIso()}\n\n### Triage Output\n${text}\n\n`;
+        delete pipeline.pendingInitialContext;
+      }
+      fs.writeFileSync(ctxFile, header + seedSection + section, "utf8");
     } else {
       fs.appendFileSync(ctxFile, section, "utf8");
     }
@@ -4121,138 +5301,30 @@ async function withMergeLock(cwd, fn) {
 }
 
 /**
- * Auto-merge an agent-created branch into main after pipeline completion.
- * Checks multiple branch naming patterns in the pipeline's workingDir.
- * Returns { branch, output } on success, null if no branch found.
+ * Merge a non-worktree pipeline's feature branch into the integration branch (dev).
+ * Returns { branch, mergeBranch, devSha, mode } or null when no branch is found.
+ * Throws on conflict (with .conflictContext) or push failure.
  */
 function autoMergePipelineBranch(pipeline) {
-  const { execSync } = require("child_process");
-  const cwd = pipeline.workingDir;
-  if (!cwd) return null;
-
-  const issueKey = pipeline.issueKey;
-  if (!issueKey) return null;
-
-  // Try multiple branch name patterns (agents may use different conventions)
-  const candidateBranches = [
-    pipeline.worktreeBranch, // Worktree branch name if set
-    `${issueKey}-auto`,
-    `${issueKey.toLowerCase()}-auto`,
-    `feature/${issueKey}`,
-    `fix/${issueKey}`,
-    issueKey.toLowerCase(),
-  ].filter(Boolean);
-
-  let branchName = null;
-  for (const candidate of candidateBranches) {
-    try {
-      execSync(`git rev-parse --verify ${candidate}`, { cwd, encoding: "utf8", timeout: 5000, stdio: "pipe" });
-      branchName = candidate;
-      break;
-    } catch { /* branch doesn't exist, try next */ }
-  }
-
-  if (!branchName) {
-    // No matching branch found
-    return null;
-  }
-
-  // Check if branch has commits ahead of main
-  const ahead = parseInt(execSync(`git rev-list main..${branchName} --count`, { cwd, encoding: "utf8", timeout: 5000, stdio: "pipe" }).trim()) || 0;
-  if (ahead === 0) {
-    console.log(`[${nowIso()}] Branch ${branchName} has no commits ahead of main, skipping merge`);
-    return null;
-  }
-
-  // Use a temporary git worktree to merge — never touch the agent's working directory
-  const path = require("path");
-  const os = require("os");
-  const tmpWorktree = path.join(os.tmpdir(), `auto-merge-${issueKey}-${Date.now()}`);
-  console.log(`[${nowIso()}] Auto-merge: creating temp worktree at ${tmpWorktree} for ${branchName}`);
-
-  try {
-    // Create a temporary worktree checked out to main
-    execSync(`git worktree add "${tmpWorktree}" main`, { cwd, encoding: "utf8", timeout: 15000, stdio: "pipe" });
-
-    let mergeOutput;
-    try {
-      mergeOutput = execSync(
-        `git merge ${branchName} --no-ff -m "Merge ${branchName} (pipeline auto-merge)"`,
-        { cwd: tmpWorktree, encoding: "utf8", timeout: 30000 }
-      );
-    } catch (mergeErr) {
-      // Merge failed (conflict) — abort in worktree, gather context for agent
-      console.warn(`[${nowIso()}] Merge of ${branchName} into main has conflicts — dispatching agent to resolve`);
-      try { execSync("git merge --abort", { cwd: tmpWorktree, encoding: "utf8", timeout: 5000 }); } catch {}
-
-      // Get context for the agent: what changed on each side
-      let mainLog = "", branchLog = "", diffStat = "";
-      try {
-        mainLog = execSync(`git log ${branchName}..main --oneline -20`, { cwd, encoding: "utf8", timeout: 10000, stdio: "pipe" }).trim();
-        branchLog = execSync(`git log main..${branchName} --oneline -20`, { cwd, encoding: "utf8", timeout: 10000, stdio: "pipe" }).trim();
-        diffStat = execSync(`git diff main...${branchName} --stat`, { cwd, encoding: "utf8", timeout: 10000, stdio: "pipe" }).trim();
-      } catch {}
-
-      // Throw a special error that carries the conflict context for the caller
-      const err = new Error(`MERGE_CONFLICT:${branchName}`);
-      err.conflictContext = { branchName, mainLog, branchLog, diffStat, issueKey, pipelineId: pipeline.pipelineId };
-      throw err;
-    }
-
-    // Push to remote after merge (worktree shares refs with the main repo)
-    try {
-      const remotes = execSync("git remote", { cwd: tmpWorktree, encoding: "utf8", timeout: 5000 }).trim().split("\n");
-      if (remotes.length > 0) {
-        execSync(`git push ${remotes[0]} main`, { cwd: tmpWorktree, encoding: "utf8", timeout: 30000 });
-        console.log(`[${nowIso()}] Pushed merge of ${branchName} to ${remotes[0]}/main`);
-      }
-    } catch (pushErr) {
-      console.warn(`[${nowIso()}] Push after merge of ${branchName} failed: ${pushErr.message}`);
-    }
-
-    // Clean up the merged branch (from the main repo)
-    try {
-      execSync(`git branch -d ${branchName}`, { cwd, encoding: "utf8", timeout: 5000 });
-    } catch (e) {
-      console.log(`[${nowIso()}] Branch cleanup warning: ${e.message}`);
-    }
-
-    jobEmitter.emit("pipeline:auto-merged", { pipelineId: pipeline.pipelineId, issueKey, branch: branchName });
-    return { branch: branchName, output: String(mergeOutput).trim() };
-  } catch (e) {
-    // Re-throw conflict errors as-is (they carry context)
-    if (e.conflictContext) throw e;
-    throw new Error(`Merge failed on ${branchName}: ${e.message}`);
-  } finally {
-    // Always clean up the temporary worktree
-    try {
-      execSync(`git worktree remove "${tmpWorktree}" --force`, { cwd, encoding: "utf8", timeout: 10000, stdio: "pipe" });
-      console.log(`[${nowIso()}] Cleaned up temp worktree ${tmpWorktree}`);
-    } catch (cleanupErr) {
-      console.warn(`[${nowIso()}] Worktree cleanup warning: ${cleanupErr.message}`);
-      // Fallback: remove directory and prune worktree list
-      try {
-        execSync(`rm -rf "${tmpWorktree}"`, { encoding: "utf8", timeout: 5000 });
-        execSync("git worktree prune", { cwd, encoding: "utf8", timeout: 5000 });
-      } catch {}
-    }
-  }
+  return mergePipelineBranchIntoDev(pipeline);
 }
 
 /**
  * Dispatch an agent job to resolve a merge conflict.
- * The agent checks out main, merges the branch, resolves conflicts with full context,
- * commits the merge, and pushes.
+ * The agent checks out the integration branch (dev), merges the feature branch,
+ * resolves conflicts with full context, commits the merge, and pushes dev.
  */
 function dispatchMergeConflictAgent(pipeline, conflictContext) {
   const { branchName, mainLog, branchLog, diffStat, issueKey } = conflictContext;
+  const mergeBranch = conflictContext.mergeBranch || resolveMergeBranch(pipeline.workingDir) || "dev";
+  const remote = resolveRemoteName(pipeline.workingDir);
 
   const prompt = [
     `You are resolving a merge conflict for pipeline ${pipeline.pipelineId} (${issueKey}).`,
     ``,
-    `Branch \`${branchName}\` needs to be merged into \`main\` but has conflicts.`,
+    `Branch \`${branchName}\` needs to be merged into \`${mergeBranch}\` but has conflicts.`,
     ``,
-    `## Recent commits on main (since branch diverged):`,
+    `## Recent commits on ${mergeBranch} (since branch diverged):`,
     mainLog || "(none)",
     ``,
     `## Commits on ${branchName}:`,
@@ -4262,16 +5334,16 @@ function dispatchMergeConflictAgent(pipeline, conflictContext) {
     diffStat || "(none)",
     ``,
     `## Your task:`,
-    `1. Run \`git checkout main && git pull\` to ensure main is up to date.`,
+    `1. Run \`git fetch ${remote} && git checkout ${mergeBranch} && git pull --ff-only ${remote} ${mergeBranch}\` to ensure ${mergeBranch} is up to date.`,
     `2. Run \`git merge ${branchName} --no-ff\` — this will produce conflicts.`,
-    `3. For each conflicted file, read both versions carefully. Understand what main changed and what the feature branch changed. Preserve ALL meaningful work from both sides.`,
-    `4. If both sides changed the same code, integrate both changes. If they're truly incompatible, prefer the feature branch change but preserve any main-side additions.`,
+    `3. For each conflicted file, read both versions carefully. Understand what ${mergeBranch} changed and what the feature branch changed. Preserve ALL meaningful work from both sides.`,
+    `4. If both sides changed the same code, integrate both changes. If they're truly incompatible, prefer the feature branch change but preserve any ${mergeBranch}-side additions.`,
     `5. After resolving all conflicts, run the build/typecheck to verify nothing is broken.`,
-    `6. Commit with message: \`Merge ${branchName} (agent-resolved conflicts)\``,
-    `7. Push to remote: \`git push origin main\``,
-    `8. Delete the merged branch: \`git branch -d ${branchName}\``,
+    `6. Commit with message: \`Merge ${branchName} into ${mergeBranch} (agent-resolved conflicts)\``,
+    `7. Push to remote: \`git push ${remote} ${mergeBranch}\``,
+    `8. Delete the merged branch locally and on the remote: \`git branch -d ${branchName} && git push ${remote} --delete ${branchName}\``,
     ``,
-    `IMPORTANT: Do NOT use \`-X theirs\` or \`-X ours\`. Resolve each conflict manually by reading the code and understanding both changes.`,
+    `IMPORTANT: Do NOT use \`-X theirs\` or \`-X ours\`. Resolve each conflict manually by reading the code and understanding both changes. Do NOT push to main — main is reserved for human-driven PRs from ${mergeBranch}.`,
   ].join("\n");
 
   const jobId = makeJobId();
@@ -4308,13 +5380,21 @@ function dispatchMergeConflictAgent(pipeline, conflictContext) {
   jobs.set(jobId, job);
   db.jobs.set(job).catch(e => console.error(`[db] Failed to persist job ${jobId}: ${e.message}`));
 
+  // Stash the conflict branch + target so finalizeMergeConflictResolution can verify
+  // the resolver actually pushed dev when its job completes. Without this metadata,
+  // the post-resolution hook has no way to know which branch the resolver was assigned to.
+  pipeline.conflictBranch = branchName;
+  pipeline.conflictMergeBranch = mergeBranch;
+  pipeline.conflictResolverJobId = jobId;
+  db.pipelines.set(pipeline).catch(e => console.error(`[db] pipeline conflict stash failed: ${e.message}`));
+
   console.log(`[${nowIso()}] Dispatched merge-conflict agent job ${jobId} for ${branchName} → main (pipeline ${pipeline.pipelineId})`);
 
   // Notify via Telegram
   const telegramChatId = pipeline.telegram?.chatId || config.telegramChatEngineering;
   if (telegramChatId) {
     sendTelegramMessage(telegramChatId,
-      `⚠️ *Merge Conflict* — ${issueKey}\n\nBranch \`${branchName}\` conflicts with \`main\`.\nDispatched agent job \`${jobId}\` to resolve.\n\nConflicting files:\n\`\`\`\n${diffStat.substring(0, 500)}\n\`\`\``
+      `⚠️ *Merge Conflict* — ${issueKey}\n\nBranch \`${branchName}\` conflicts with \`${mergeBranch}\`.\nDispatched agent job \`${jobId}\` to resolve.\n\nConflicting files:\n\`\`\`\n${diffStat.substring(0, 500)}\n\`\`\``
     ).catch(() => {});
   }
 
@@ -4323,10 +5403,126 @@ function dispatchMergeConflictAgent(pipeline, conflictContext) {
 }
 
 /**
+ * Called when a merge-conflict resolver job succeeds. Verifies the resolver
+ * actually pushed dev (by checking the merge commit + branch deletion), then
+ * flips pipeline.merged so the upstream pipeline's Jira issue auto-transitions
+ * to Done. The dependency checker (tickDependencyChecker) re-checks blockers
+ * against pipeline records, so this is what unblocks downstream pipelines.
+ *
+ * Returns true if the resolution was verified and the pipeline was finalised.
+ */
+async function finalizeMergeConflictResolution(pipeline, job) {
+  const { execSync } = require("child_process");
+  const branchName = pipeline.conflictBranch;
+  const mergeBranch = pipeline.conflictMergeBranch || resolveMergeBranch(pipeline.workingDir) || "dev";
+  const remote = resolveRemoteName(pipeline.workingDir);
+  const issueKey = pipeline.issueKey;
+
+  if (!branchName) {
+    console.warn(`[${nowIso()}] finalizeMergeConflictResolution: no conflictBranch on pipeline ${pipeline.pipelineId}, skipping`);
+    return false;
+  }
+
+  // Refresh local refs so we see what the resolver pushed
+  try {
+    execSync(`git fetch ${remote} --prune`, { cwd: pipeline.workingDir, encoding: "utf8", timeout: 30000, stdio: "pipe" });
+  } catch (e) {
+    console.warn(`[${nowIso()}] finalizeMergeConflictResolution: fetch failed for ${pipeline.workingDir}: ${e.message}`);
+  }
+
+  // 1. Branch should be gone from remote (resolver deletes it after merging)
+  let branchGone = true;
+  try {
+    const out = execSync(`git ls-remote --heads ${remote} ${branchName}`, { cwd: pipeline.workingDir, encoding: "utf8", timeout: 15000, stdio: "pipe" }).trim();
+    branchGone = !out;
+  } catch (_) { /* assume gone */ }
+
+  // 2. Dev should contain a commit referencing the issue key
+  let devHasMerge = false;
+  let devSha = null;
+  try {
+    const log = execSync(`git log --oneline -10 ${remote}/${mergeBranch}`, { cwd: pipeline.workingDir, encoding: "utf8", timeout: 15000, stdio: "pipe" });
+    if (issueKey && log.includes(issueKey)) devHasMerge = true;
+    if (!devHasMerge && log.toLowerCase().includes(branchName.toLowerCase())) devHasMerge = true;
+    devSha = execSync(`git rev-parse ${remote}/${mergeBranch}`, { cwd: pipeline.workingDir, encoding: "utf8", timeout: 5000, stdio: "pipe" }).trim();
+  } catch (e) {
+    console.warn(`[${nowIso()}] finalizeMergeConflictResolution: dev log check failed for ${pipeline.workingDir}: ${e.message}`);
+  }
+
+  if (!devHasMerge && !branchGone) {
+    console.warn(`[${nowIso()}] Pipeline ${pipeline.pipelineId} merge-conflict resolver job ${job.jobId} reported success but dev shows no merge AND branch ${branchName} still on remote — leaving mergeError in place`);
+    return false;
+  }
+
+  if (!devHasMerge && branchGone) {
+    // Branch deleted but no commit referencing the issue — likely a no-op merge.
+    // Still treat as merged (the resolver may have rebased or fast-forwarded).
+    console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} merge-conflict resolver: branch ${branchName} deleted, dev log doesn't reference ${issueKey} — accepting as merged anyway`);
+  }
+
+  pipeline.merged = true;
+  pipeline.mergedBranch = branchName;
+  pipeline.mergedTo = mergeBranch;
+  pipeline.mergedSha = devSha;
+  pipeline.mergeError = null;
+  pipeline.conflictResolvedAt = nowIso();
+  pipeline.conflictResolverJobId = job.jobId;
+  db.pipelines.set(pipeline).catch(e => console.error(`[db] pipeline post-resolution update failed: ${e.message}`));
+
+  console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} merge-conflict resolved (${branchName} → ${mergeBranch}@${(devSha||"").slice(0,8)}) by job ${job.jobId} — flipping to merged`);
+
+  jobEmitter.emit("pipeline:merge-conflict-resolved", {
+    pipelineId: pipeline.pipelineId,
+    issueKey: pipeline.issueKey,
+    branch: branchName,
+    mergeBranch,
+    devSha,
+    resolverJobId: job.jobId,
+  });
+
+  // Telegram ping so Mark sees the unblock without checking the dashboard
+  const telegramChatId = pipeline.telegram?.chatId || config.telegramChatEngineering;
+  if (telegramChatId) {
+    sendTelegramMessage(telegramChatId,
+      `✅ *Merge resolved* — ${pipeline.issueKey}\n\nBranch \`${branchName}\` merged into \`${mergeBranch}\` by resolver job \`${job.jobId}\`.\nPipeline ${pipeline.pipelineId} now flagged merged — Jira auto-transition pending.`
+    ).catch(() => {});
+  }
+
+  // Auto-transition Jira (same guards as advancePipeline: subtasks block, FAIL phases block)
+  const anyPhaseFailed = pipeline.phases?.some(ph => ph.gateResult && ph.gateResult.passed === false);
+  if (anyPhaseFailed) {
+    console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} skipping post-resolution auto-transition: phase FAIL verdict present`);
+  } else {
+    autoTransitionIssueToDone(pipeline).catch(e => {
+      console.error(`[${nowIso()}] Pipeline ${pipeline.pipelineId} post-resolution auto-transition failed: ${e.message}`);
+    });
+    if (pipeline.parentKey) {
+      setTimeout(() => {
+        checkAndTransitionParent(pipeline.parentKey).catch(e => {
+          console.error(`[${nowIso()}] Pipeline ${pipeline.pipelineId} post-resolution parent transition failed: ${e.message}`);
+        });
+      }, 5000);
+    }
+  }
+
+  return true;
+}
+
+/**
  * Advance the pipeline to the next non-skipped phase.
  * If no more phases, mark pipeline as completed.
  */
 async function advancePipeline(pipeline) {
+  // Defensive: if any phase is still running, do NOT advance or mark the
+  // pipeline complete. The phase that's still running will call advancePipeline
+  // again when it finishes. This prevents a stale callback from declaring the
+  // pipeline done while real work is in flight.
+  const stillRunning = pipeline.phases.find(p => p.status === "running");
+  if (stillRunning) {
+    console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} advancePipeline deferred: phase ${stillRunning.name} still running`);
+    return;
+  }
+
   const nextIndex = pipeline.phases.findIndex(
     (p, i) => i > pipeline.currentPhase && (p.status === "pending")
   );
@@ -4351,81 +5547,72 @@ async function advancePipeline(pipeline) {
       phases: pipeline.phases.length,
     });
 
-    // Auto-merge branch into main on successful pipeline completion
-    // Skip if already merged after implementation phase
-    // Uses merge lock to prevent concurrent checkout/merge conflicts on same repo
+    // Auto-merge feature branch into the integration branch (dev) on successful
+    // pipeline completion. The local main branch is never touched by the runner —
+    // a human reviews `dev` and opens a PR `dev -> main` for deployment.
+    // Synchronous: by the time this returns, dev has been pushed and the local
+    // feature branch + worktree have been cleaned up.
     if (pipeline.merged) {
       console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} already merged (${pipeline.mergedBranch}) — skipping completion merge`);
     } else if (pipeline.worktreeId && config.worktrees?.enabled) {
-      // Worktree-based merge (wrapped in lock)
       await withMergeLock(pipeline.workingDir, async () => {
         try {
           const mergeResult = mergeWorktree(pipeline.issueKey);
-          console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-merged worktree: ${mergeResult.branch} → main`);
+          console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} merged ${mergeResult.branch} -> ${mergeResult.mergeBranch}@${(mergeResult.devSha || "").slice(0,8)} (${mergeResult.mode})`);
           pipeline.merged = true;
           pipeline.mergedBranch = mergeResult.branch;
-        
+          pipeline.mergedTo = mergeResult.mergeBranch;
+          pipeline.mergedSha = mergeResult.devSha;
         } catch (e) {
-          console.error(`[${nowIso()}] Pipeline ${pipeline.pipelineId} worktree merge failed: ${e.message}`);
-          try {
-            const fallbackResult = autoMergePipelineBranch(pipeline);
-            if (fallbackResult) {
-              console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-merged (fallback): ${fallbackResult.branch} → main`);
-              pipeline.merged = true;
-              pipeline.mergedBranch = fallbackResult.branch;
-            
-            } else {
-              pipeline.mergeError = e.message;
-            
-            }
-          } catch (e2) {
-            if (e2.conflictContext) {
-              console.warn(`[${nowIso()}] Pipeline ${pipeline.pipelineId} fallback merge conflict — dispatching agent`);
-              dispatchMergeConflictAgent(pipeline, e2.conflictContext);
-              pipeline.mergeError = `Conflict on ${e2.conflictContext.branchName} — agent dispatched`;
-            } else {
-              console.error(`[${nowIso()}] Pipeline ${pipeline.pipelineId} fallback merge also failed: ${e2.message}`);
-              pipeline.mergeError = `${e.message} | fallback: ${e2.message}`;
-            }
-          
+          if (e.conflictContext) {
+            console.warn(`[${nowIso()}] Pipeline ${pipeline.pipelineId} merge conflict — dispatching agent`);
+            dispatchMergeConflictAgent(pipeline, e.conflictContext);
+            pipeline.mergeError = `Conflict on ${e.conflictContext.branchName} — agent dispatched`;
+          } else {
+            console.error(`[${nowIso()}] Pipeline ${pipeline.pipelineId} worktree merge failed: ${e.message}`);
+            pipeline.mergeError = e.message;
           }
         }
       });
     } else if (!pipeline.merged) {
-      // Non-worktree: detect and merge agent-created branch (wrapped in lock)
+      // Non-worktree: detect agent-created branch in workingDir and merge it
       await withMergeLock(pipeline.workingDir, async () => {
         try {
-          const autoMergeResult = autoMergePipelineBranch(pipeline);
-          if (autoMergeResult) {
-            console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-merged: ${autoMergeResult.branch} → main`);
-          pipeline.merged = true;
-          pipeline.mergedBranch = autoMergeResult.branch;
-        
-        } else {
-          console.warn(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-merge skipped: no mergeable branch found for ${pipeline.issueKey}`);
+          const result = autoMergePipelineBranch(pipeline);
+          if (result) {
+            console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} merged ${result.branch} -> ${result.mergeBranch}@${(result.devSha || "").slice(0,8)} (${result.mode})`);
+            pipeline.merged = true;
+            pipeline.mergedBranch = result.branch;
+            pipeline.mergedTo = result.mergeBranch;
+            pipeline.mergedSha = result.devSha;
+          } else {
+            console.warn(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-merge skipped: no mergeable branch found for ${pipeline.issueKey}`);
+          }
+        } catch (e) {
+          if (e.conflictContext) {
+            console.warn(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-merge conflict — dispatching agent`);
+            dispatchMergeConflictAgent(pipeline, e.conflictContext);
+            pipeline.mergeError = `Conflict on ${e.conflictContext.branchName} — agent dispatched`;
+          } else {
+            console.error(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-merge failed: ${e.message}`);
+            pipeline.mergeError = e.message;
+          }
         }
-      } catch (e) {
-        if (e.conflictContext) {
-          console.warn(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-merge conflict — dispatching agent`);
-          dispatchMergeConflictAgent(pipeline, e.conflictContext);
-          pipeline.mergeError = `Conflict on ${e.conflictContext.branchName} — agent dispatched`;
-        } else {
-          console.error(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-merge failed: ${e.message}`);
-          pipeline.mergeError = e.message;
-        }
-      
-      }
       });
     }
 
-    // Auto-transition Jira issue to Done after successful pipeline completion.
-    // The PM agent should do this, but as a safety net the runner does it too.
-    // Guard: only transition if no phase had a FAIL verdict in its gate evaluation.
+    // Auto-transition Jira issue to Done only after the merge into dev has succeeded.
+    // Guard 1: any phase with a FAIL verdict blocks the transition.
+    // Guard 2: if the merge didn't succeed, leave Jira un-Done — preserves the
+    // CER-530-style fix (no silent Done when the code never reaches the integration
+    // branch). A human still needs to act on `pipeline.mergeError`.
     const anyPhaseFailed = pipeline.phases.some(ph =>
       ph.gateResult && ph.gateResult.passed === false
     );
     if (anyPhaseFailed) {
       console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} skipping auto-transition: one or more phases had FAIL verdict`);
+    } else if (!pipeline.merged) {
+      console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} skipping auto-transition: merge did not succeed (${pipeline.mergeError || 'no branch found'})`);
     } else {
       autoTransitionIssueToDone(pipeline).catch(e => {
         console.error(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-transition failed: ${e.message}`);
@@ -4678,11 +5865,34 @@ async function createPipelineFailureSubtask(pipeline, phase) {
     if (!projectKey || !projectId) return;
 
     // Truncate error for summary (max 255 chars)
-    const errorSummary = (phase.error || "Phase failed").substring(0, 150);
-    const summary = `[Fix] ${pipeline.issueKey} — ${phase.name} failed: ${errorSummary}`.substring(0, 255);
+    const errorSummary = (phase.error || "Phase failed").substring(0, 140);
+    const summary = `[RCA] ${pipeline.issueKey} — ${phase.name} exhausted: ${errorSummary}`.substring(0, 255);
 
-    // Determine which agent should fix this
-    const agentLabel = phase.agent ? `agent:${phase.agent}` : "agent:engineer-implementer";
+    // Route exhausted-pipeline failures to ask-tom for root-cause analysis instead of
+    // re-spawning the same agent. Ask-tom investigates, attaches findings, and only then
+    // delegates to an implementer (or recommends scope reduction / deferral) with a
+    // narrow, evidenced plan.
+    const agentLabel = "agent:ask-tom-agent";
+    const failedAgent = phase.agent || "unknown";
+    const fixLoopAttempts = phase.fixLoopAttempts || 0;
+    const verifyLoopAttempts = pipeline.verifyFixLoopAttempts || 0;
+
+    const rcaBrief = [
+      `Pipeline ${pipeline.pipelineId} (${pipeline.pipelineType}) exhausted all retries at phase "${phase.name}".`,
+      ``,
+      `Failed agent: ${failedAgent}`,
+      `Fix-loop attempts: ${fixLoopAttempts}`,
+      `Verify-fix-loop attempts: ${verifyLoopAttempts}`,
+      `Last error: ${phase.error || "Unknown"}`,
+      ``,
+      `## Your job (ask-tom-agent)`,
+      `Do NOT just re-run the failed agent. Treat this as a root-cause problem.`,
+      `1. Read the parent issue ${pipeline.issueKey} and the prior pipeline jobs/comments to understand what was attempted and why each attempt failed.`,
+      `2. Identify the actual root cause — distinguish between (a) a narrow bug in the change, (b) scope creep that broke unrelated code, (c) a pre-existing flaky/broken test, (d) the spec being unimplementable as stated.`,
+      `3. Post your findings as a Jira comment on this subtask before doing any code work.`,
+      `4. Decide the path: narrow the scope and delegate to engineer-implementer with a constrained plan; recommend a meeting (planner + qa + product-manager) for scope/defer decisions; or escalate to a human if the spec needs revision.`,
+      `5. Only dispatch an implementer once you have an evidenced, scoped plan that addresses the root cause.`,
+    ].join("\n");
 
     const subtaskPayload = {
       fields: {
@@ -4694,14 +5904,11 @@ async function createPipelineFailureSubtask(pipeline, phase) {
           version: 1,
           content: [{
             type: "paragraph",
-            content: [{
-              type: "text",
-              text: `Pipeline ${pipeline.pipelineId} failed at phase "${phase.name}".\n\nError: ${phase.error || "Unknown"}\n\nPipeline type: ${pipeline.pipelineType}\nAgent: ${phase.agent || "unknown"}\n\nPlease investigate and resolve the failure so the parent issue can be completed.`
-            }]
+            content: [{ type: "text", text: rcaBrief }]
           }]
         },
         issuetype: { name: "Subtask" },
-        labels: ["pipeline-fix", agentLabel],
+        labels: ["pipeline-fix", "needs-rca", agentLabel],
         priority: { name: "High" },
       }
     };
@@ -4792,6 +5999,26 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
   const phase = pipeline.phases[phaseIndex];
   if (!phase) return;
 
+  // Guard: ignore stale callbacks for phases that have already terminated.
+  // This happens when a duplicate job for the same phase finishes late — e.g.
+  // job 1 of phase X is interrupted by a runner restart and re-queued via
+  // `retry-pending` (loadStateFromDB), while the pipeline's own resume logic
+  // ALSO restarts phase X with a fresh job 2. When job 1 eventually finishes,
+  // it would re-fire phase completion and (incorrectly) advance the pipeline
+  // past phases that are already running. Concrete repro: EOS-653 on 2026-04-26
+  // leapt from completed code-review straight to verify, leaving code-review
+  // running and the pipeline marked completed before verify finished.
+  if (phase.status === "completed" || phase.status === "failed" || phase.status === "skipped") {
+    console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} ignoring stale completion for phase ${phase.name} (status=${phase.status}, jobId=${job.jobId})`);
+    return;
+  }
+  // Defensive: if the phase's tracked jobId no longer matches this job, the
+  // phase has already moved on (e.g. fix-loop reset). Drop the stale callback.
+  if (phase.jobId && phase.jobId !== job.jobId) {
+    console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} ignoring duplicate job completion for phase ${phase.name} (current jobId=${phase.jobId}, completing jobId=${job.jobId})`);
+    return;
+  }
+
   phase.completedAt = nowIso();
 
   if (job.status === "failed" || job.status === "quality-gate-failed" || job.status === "cancelled") {
@@ -4802,6 +6029,24 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
       phase.gate && (fixLoopCfg.gateTypes || ["quality-gate"]).includes(phase.gate.type);
 
     if (isFixLoopEligible && phase.fixLoopAttempts < (fixLoopCfg.maxAttempts || 3)) {
+      // d3a: short-circuit fix-loop when the failing tests live entirely
+      // outside the pipeline's diff (i.e. base branch was already red).
+      // Only check after at least one fix-loop attempt to avoid false
+      // positives on a fresh implementer-introduced issue.
+      if (phase.fixLoopAttempts >= 1) {
+        try {
+          const baseRed = detectInheritedRedBase(pipeline, phase, job);
+          if (baseRed.inherited) {
+            phase.baseRedDetection = baseRed;
+            console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} BLOCKED_ON_BASE_RED (basis=${baseRed.basis}, failing=${baseRed.failingFiles.length} file(s)) — halting fix-loop`);
+            // Fall through to terminal-fail block below.
+          }
+        } catch (e) {
+          console.warn(`[${nowIso()}] detectInheritedRedBase error: ${e.message}`);
+        }
+      }
+
+      if (!phase.baseRedDetection) {
       phase.fixLoopAttempts++;
       phase.status = "pending";
       phase.jobId = null;
@@ -4833,6 +6078,8 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
 
       setTimeout(() => executePipelinePhase(pipeline, phaseIndex), 5000);
       return;
+      }
+      // baseRedDetection set: fall through to terminal-fail block.
     }
 
     // Standard retry (non-quality-gate failures)
@@ -4858,20 +6105,41 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
       return;
     }
 
-    // All retries/fix-loops exhausted or cancelled
+    // All retries/fix-loops exhausted, cancelled, or base-red detected
     phase.status = "failed";
-    phase.error = job.error || "Phase job failed";
-    if (phase.fixLoopAttempts > 0) {
-      phase.error += ` (after ${phase.fixLoopAttempts} fix-loop attempts)`;
+    const baseRed = phase.baseRedDetection;
+    if (baseRed && baseRed.inherited) {
+      const head = baseRed.failingFiles.slice(0, 3).join(", ");
+      const more = baseRed.failingFiles.length > 3 ? ` (+${baseRed.failingFiles.length - 3} more)` : "";
+      phase.error = `BLOCKED_ON_BASE_RED: ${baseRed.failingFiles.length} failing test file(s) live outside pipeline diff (basis=${baseRed.basis}). Failing: ${head}${more}.`;
+    } else {
+      phase.error = job.error || "Phase job failed";
+      if (phase.fixLoopAttempts > 0) {
+        phase.error += ` (after ${phase.fixLoopAttempts} fix-loop attempts)`;
+      }
     }
 
     pipeline.status = "failed";
     pipeline.completedAt = nowIso();
+    pipeline.blockedOnBaseRed = !!(baseRed && baseRed.inherited);
     pipeline.error = `Phase "${phase.name}" failed: ${phase.error}`;
+    const baseRedActive = baseRed && baseRed.inherited;
     db.pipelines.set(pipeline).catch(e => console.error('[db] pipeline update failed: ' + e.message));
   
 
     console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} FAILED at phase ${phase.name}: ${pipeline.error}`);
+
+    // Preserve any partial work on the worktree branch by pushing it to the remote.
+    // This guarantees we never lose progress even when the pipeline didn't reach a green state.
+    try {
+      const preserved = preserveBranchOnFailure(pipeline, phase);
+      if (preserved) {
+        pipeline.preservedBranch = preserved.branch;
+        pipeline.preservedRemote = preserved.pushedRemote;
+      }
+    } catch (e) {
+      console.warn(`[${nowIso()}] preserveBranchOnFailure (job-fail) error: ${e.message}`);
+    }
 
     // Create a Jira subtask for the failure so it gets resolved
     createPipelineFailureSubtask(pipeline, phase).catch(e => {
@@ -4908,7 +6176,12 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
         completedAt: pipeline.completedAt,
         slack: pipeline.slack || null,
         telegram: pipeline.telegram || null,
-        message: `Pipeline FAILED for ${pipeline.issueKey} at phase "${phase.name}": ${phase.error}`,
+        blockedOnBaseRed: !!baseRedActive,
+        failingTestFiles: baseRedActive ? baseRed.failingFiles : undefined,
+        baseRef: baseRedActive ? baseRed.basis : undefined,
+        message: baseRedActive
+          ? `Pipeline ${pipeline.issueKey} BLOCKED_ON_BASE_RED — ${baseRed.failingFiles.length} test file(s) failing on ${baseRed.basis} that this pipeline never touched. Fix the base before retrying.`
+          : `Pipeline FAILED for ${pipeline.issueKey} at phase "${phase.name}": ${phase.error}`,
       };
       const mockJob = { jobId: pipeline.pipelineId, logFile: path.join(LOG_DIR, `${pipeline.pipelineId}.log`) };
       if (!fs.existsSync(mockJob.logFile)) {
@@ -4927,9 +6200,14 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
   phase.gateResult = gateResult;
 
   if (!gateResult.passed) {
-    // Gate failed — retry the phase if retries remain
+    // Gate failed — retry the phase if retries remain.
+    // Exception: when QA returns an explicit FAIL verdict, retrying the same
+    // code is pointless — go straight to the verify-fix-loop so the
+    // implementer can address the findings.
+    const isDefinitiveVerifyFail = phase.name === "verify" &&
+      /verdict is FAIL/i.test(gateResult.reason || "");
     const maxPhaseRetries = 1;
-    if (phase.retryCount < maxPhaseRetries) {
+    if (!isDefinitiveVerifyFail && phase.retryCount < maxPhaseRetries) {
       phase.retryCount++;
       phase.status = "pending";
       phase.jobId = null;
@@ -4950,15 +6228,90 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
       return;
     }
 
-    // Gate failed and no more retries
+    // Verify fix-loop: when QA (verify) gate fails, loop back to the implementer
+    // to fix issues on the same branch, then re-run QA.  The branch stays checked
+    // out — merge only happens when verify finally passes.
+    const verifyFixCfg = config.fixLoop || {};
+    const maxVerifyLoops = verifyFixCfg.maxVerifyAttempts || 3;
+    if (phase.name === "verify" && verifyFixCfg.enabled) {
+      pipeline.verifyFixLoopAttempts = (pipeline.verifyFixLoopAttempts || 0) + 1;
+      if (pipeline.verifyFixLoopAttempts <= maxVerifyLoops) {
+        const implIndex = pipeline.phases.findIndex(p => p.name === "implementation");
+        if (implIndex >= 0) {
+          const implPhase = pipeline.phases[implIndex];
+
+          // Reset implementation phase with QA findings as fix context
+          implPhase.status = "pending";
+          implPhase.jobId = null;
+          implPhase.startedAt = null;
+          implPhase.fixLoopContext = {
+            attempt: pipeline.verifyFixLoopAttempts,
+            failedCheck: `QA verification failed: ${gateResult.reason}`,
+            failedCommand: "",
+            failureOutput: ((job.parsedOutput?.result || "") + "\n" + (job.stdout || "")).substring(0, 4000),
+            sourcePhase: "verify",
+          };
+
+          // Reset verify phase so it re-runs after implementation
+          phase.status = "pending";
+          phase.jobId = null;
+          phase.startedAt = null;
+          phase.retryCount = 0;
+          phase.gateResult = null;
+
+          // Also reset code-review if present so reviewer sees the fixes
+          const crIndex = pipeline.phases.findIndex(p => p.name === "code-review");
+          if (crIndex >= 0 && crIndex > implIndex) {
+            const crPhase = pipeline.phases[crIndex];
+            crPhase.status = "pending";
+            crPhase.jobId = null;
+            crPhase.startedAt = null;
+            crPhase.retryCount = 0;
+            crPhase.gateResult = null;
+          }
+
+          pipeline.status = "running";
+          db.pipelines.set(pipeline).catch(e => console.error('[db] pipeline update failed: ' + e.message));
+
+          console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} verify-fix-loop ${pipeline.verifyFixLoopAttempts}/${maxVerifyLoops}: QA failed → re-dispatching implementer on same branch`);
+
+          jobEmitter.emit("pipeline:verify-fix-loop", {
+            pipelineId: pipeline.pipelineId,
+            issueKey: pipeline.issueKey,
+            phase: phase.name,
+            attempt: pipeline.verifyFixLoopAttempts,
+            maxAttempts: maxVerifyLoops,
+            reason: gateResult.reason,
+          });
+
+          setTimeout(() => executePipelinePhase(pipeline, implIndex), 5000);
+          return;
+        }
+      }
+    }
+
+    // Gate failed and no more retries (or verify-fix-loop exhausted)
     phase.status = "failed";
     phase.error = `Gate failed: ${gateResult.reason}`;
+    if (pipeline.verifyFixLoopAttempts > 0) {
+      phase.error += ` (after ${pipeline.verifyFixLoopAttempts} verify-fix-loop attempts)`;
+    }
 
     pipeline.status = "failed";
     pipeline.completedAt = nowIso();
     pipeline.error = `Phase "${phase.name}" gate failed: ${gateResult.reason}`;
     db.pipelines.set(pipeline).catch(e => console.error('[db] pipeline update failed: ' + e.message));
-  
+
+    // Preserve any partial work on the worktree branch by pushing it to the remote.
+    try {
+      const preserved = preserveBranchOnFailure(pipeline, phase);
+      if (preserved) {
+        pipeline.preservedBranch = preserved.branch;
+        pipeline.preservedRemote = preserved.pushedRemote;
+      }
+    } catch (e) {
+      console.warn(`[${nowIso()}] preserveBranchOnFailure (gate-fail) error: ${e.message}`);
+    }
 
     // Create a Jira subtask for the gate failure so it gets resolved
     createPipelineFailureSubtask(pipeline, phase).catch(e => {
@@ -5053,42 +6406,11 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
     applyDynamicPhaseGating(pipeline, phase, job);
   }
 
-  // Auto-merge after implementation phase passes its quality gate.
-  // This ensures code reaches main even if later review phases (QA/UAT/acceptance) fail.
-  // Subsequent phases will review code on main rather than in the worktree.
-  // Wrapped in merge lock to prevent concurrent checkout/merge conflicts.
-  if (phase.name === "implementation" && !pipeline.merged) {
-    await withMergeLock(pipeline.workingDir, async () => {
-      try {
-        if (pipeline.worktreeId && config.worktrees?.enabled) {
-          const mergeResult = mergeWorktree(pipeline.issueKey);
-          console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-merged after implementation: ${mergeResult.branch} → main`);
-          pipeline.merged = true;
-          pipeline.mergedBranch = mergeResult.branch;
-          pipeline.worktreePath = null; // Subsequent phases use workingDir (main)
-        } else {
-          const mergeResult = autoMergePipelineBranch(pipeline);
-          if (mergeResult) {
-            console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} auto-merged after implementation: ${mergeResult.branch} → main`);
-            pipeline.merged = true;
-            pipeline.mergedBranch = mergeResult.branch;
-            pipeline.worktreePath = null;
-          }
-        }
-      
-      } catch (e) {
-        if (e.conflictContext) {
-          console.warn(`[${nowIso()}] Pipeline ${pipeline.pipelineId} post-implementation merge conflict — dispatching agent`);
-          dispatchMergeConflictAgent(pipeline, e.conflictContext);
-          pipeline.mergeError = `Conflict on ${e.conflictContext.branchName} — agent dispatched`;
-        } else {
-          console.error(`[${nowIso()}] Pipeline ${pipeline.pipelineId} post-implementation merge failed: ${e.message}`);
-          pipeline.mergeError = e.message;
-        }
-      
-      }
-    });
-  }
+  // Merge is deferred to pipeline completion (advancePipeline) so that
+  // code-review and QA (verify) phases run on the implementation branch.
+  // If QA fails, the verify-fix-loop sends the implementer back to fix on
+  // the same branch before QA re-runs.  Only when QA passes does the branch
+  // get merged into main.
 
   // Send pipeline phase progress callback for Slack notifications
   if (pipeline.callbackUrl) {
@@ -5410,13 +6732,23 @@ async function loadStateFromDB() {
         staleCount++;
         continue;
       }
-      // Mark interrupted running jobs as failed with retry budget
+      // Mark interrupted running jobs as failed with retry budget.
+      //
+      // KNOWN BUG (deferred fix): when an interrupted job belongs to a pipeline
+      // phase, retry-pending here races the pipeline's own resume logic below
+      // (line ~5919-5927) — both will spawn a fresh job for the same phase.
+      // The orphan from this path runs in parallel against the same worktree
+      // and, when it eventually finishes, fires a stale onPipelinePhaseComplete
+      // (mitigated by the guard at the top of that function). Two writers
+      // against the same worktree is still a correctness risk; the proper fix
+      // is to skip retry-pending here when job.pipelineId is set and let the
+      // pipeline-resume path own re-execution. EOS-653 (2026-04-26) hit this.
       if (job.status === "running" || job.status === "queued" || job.status === "retry-pending" || job.status === "quality-gate-retry") {
         job.status = "failed";
         job.error = "Process interrupted (runner restart)";
         job.finishedAt = job.finishedAt || new Date().toISOString();
         const maxRetries = job.maxRetries ?? MAX_RETRIES;
-        if ((job.retryCount || 0) < maxRetries) {
+        if ((job.retryCount || 0) < maxRetries && !job.pipelineId) {
           job.status = "retry-pending";
           job.retryCount = (job.retryCount || 0) + 1;
           job.retryAt = new Date(Date.now() + 5000).toISOString();
@@ -5820,6 +7152,16 @@ function tickScheduler() {
         const prod = products.get(d.product);
         if (prod && prod.workingDir) scheduledWorkingDir = prod.workingDir;
       }
+      // Propagate meeting action context so closeMeetingJiraTask can transition
+      // the [Meeting] subtask to Done after the scheduled job succeeds.
+      let meetingAction = null;
+      if (typeof item.source === "string" && item.source.startsWith("meeting:") && d.task) {
+        meetingAction = {
+          task: d.task,
+          priority: d.priority || null,
+          meetingId: item.source.slice("meeting:".length),
+        };
+      }
       const jobId = makeJobId();
       const logFile = path.join(LOG_DIR, `${jobId}.log`);
       const metaFile = path.join(LOG_DIR, `${jobId}.json`);
@@ -5831,7 +7173,7 @@ function tickScheduler() {
         prompt: d.prompt,
         context: d.context || "",
         workingDir: scheduledWorkingDir || DEFAULT_WORKING_DIR,
-        issueKey: null,
+        issueKey: d.issueKey || null,
         model: config.routing?.agentToModel?.[d.agent] || "sonnet",
         selectedModel: null,
         requestedProvider: null,
@@ -5848,6 +7190,7 @@ function tickScheduler() {
         maxRetries: config.maxRetries || 3,
         source: item.source || "scheduler",
         scheduledItemId: id,
+        meetingAction,
       };
       jobs.set(jobId, job);
       db.jobs.set(job).catch(e => console.error(`[db] Failed to persist job ${jobId}: ${e.message}`));
@@ -5984,6 +7327,31 @@ async function jiraRestPut(apiPath, payload) {
   }
 }
 
+/**
+ * After a standalone implementer's branch is merged into dev, the issue's
+ * downstream agent labels (engineer-reviewer/qa-agent/product-manager) are
+ * obsolete — there's nothing to review on the dead feature branch. Strip them
+ * so the reconciler doesn't keep firing read-only agents that have nothing to do.
+ * Leaves any non-engineering agent labels (security-agent etc.) intact.
+ */
+async function stripDownstreamLabelsAfterMerge(issueKey) {
+  if (!issueKey) return;
+  const stripLabels = new Set([
+    "agent:engineer-reviewer",
+    "agent:reviewer",
+    "agent:engineer-implementer",
+    "agent:implementer",
+  ]);
+  const issueRes = await jiraRestGet(`/issue/${issueKey}?fields=labels`);
+  if (!issueRes || issueRes.statusCode !== 200) return;
+  const currentLabels = issueRes.json?.fields?.labels || [];
+  const updatedLabels = currentLabels.filter(l => !stripLabels.has(l));
+  if (updatedLabels.length === currentLabels.length) return;
+  const removed = currentLabels.filter(l => !updatedLabels.includes(l));
+  await jiraRestPut(`/issue/${issueKey}`, { fields: { labels: updatedLabels } });
+  console.log(`[${nowIso()}] standalone-merge: stripped labels [${removed.join(", ")}] from ${issueKey}`);
+}
+
 async function transitionIssueToInProgress(issueKey) {
   const { domain, email, apiToken } = config.jira || {};
   if (!domain || !email || !apiToken) return;
@@ -6000,6 +7368,190 @@ async function transitionIssueToInProgress(issueKey) {
     console.log(`[sprint-runner] Transitioned ${issueKey} to In Progress`);
   } catch (e) {
     console.log(`[sprint-runner] Failed to transition ${issueKey}: ${e.message}`);
+  }
+}
+
+/**
+ * Transition a Jira issue to Done. Looks up transitions first (transition ID
+ * differs per project workflow) and prefers a transition named "Done", falling
+ * back to any transition whose target status is in the "done" category.
+ * Returns true on success.
+ */
+async function transitionIssueToDone(issueKey, reason = "") {
+  const { domain, email, apiToken } = config.jira || {};
+  if (!domain || !email || !apiToken) return false;
+  const auth = "Basic " + Buffer.from(`${email}:${apiToken}`).toString("base64");
+  const baseUrl = domain.replace(/\/+$/, "");
+  const headers = { authorization: auth };
+  try {
+    const transRes = await getJson(`${baseUrl}/rest/api/3/issue/${issueKey}/transitions`, headers);
+    if (transRes.statusCode !== 200) return false;
+    const transitions = transRes.json?.transitions || [];
+    let target = transitions.find(t => (t.name || "").toLowerCase() === "done");
+    if (!target) target = transitions.find(t => (t.to?.statusCategory?.key || "").toLowerCase() === "done");
+    if (!target) {
+      console.log(`[verified-close] ${issueKey}: no Done transition available`);
+      return false;
+    }
+    await postJson(`${baseUrl}/rest/api/3/issue/${issueKey}/transitions`, { transition: { id: target.id } }, headers);
+    console.log(`[verified-close] Transitioned ${issueKey} to ${target.name}${reason ? ` (${reason})` : ""}`);
+    return true;
+  } catch (e) {
+    console.log(`[verified-close] Failed to transition ${issueKey}: ${e.message}`);
+    return false;
+  }
+}
+
+/**
+ * After a job succeeds, strip every agent:* label that aliases to the just-
+ * completed agent. Without this, the periodic agent-label reconciler re-fires
+ * the same agent every tick, producing the "no-op verdict" loops that spam
+ * Telegram. Pipelines drive their phases via state, not labels, so stripping
+ * here is safe mid-pipeline.
+ *
+ * If the agent's output contains a [VERIFIED-CLOSE] marker, also transition
+ * the issue to Done — this lets agents close issues they've verified in a
+ * single hop instead of looping forever on "Recommend close as Done".
+ */
+async function stripOwnAgentLabelsOnSuccess(job) {
+  if (!job?.issueKey || !job?.agent) return;
+  const agentLabelMap = config.agentLabels || {};
+  const ownLabels = new Set();
+  for (const [label, agent] of Object.entries(agentLabelMap)) {
+    if (agent === job.agent) ownLabels.add(label);
+  }
+  if (ownLabels.size === 0) return;
+
+  try {
+    const issueRes = await jiraRestGet(`/issue/${job.issueKey}?fields=labels,status`);
+    if (!issueRes || issueRes.statusCode !== 200) return;
+    const statusName = (issueRes.json?.fields?.status?.name || "").toLowerCase();
+    if (statusName === "done" || statusName === "closed") return; // already terminal
+    const currentLabels = issueRes.json?.fields?.labels || [];
+    const updatedLabels = currentLabels.filter(l => !ownLabels.has(l));
+
+    if (updatedLabels.length !== currentLabels.length) {
+      const removed = currentLabels.filter(l => !updatedLabels.includes(l));
+      await jiraRestPut(`/issue/${job.issueKey}`, { fields: { labels: updatedLabels } });
+      console.log(`[strip-own-label] ${job.issueKey}: stripped [${removed.join(", ")}] (agent=${job.agent}, jobId=${job.jobId})`);
+    }
+
+    // Scan for [VERIFIED-CLOSE] marker and transition to Done.
+    const output = (job.parsedOutput?.result || "") + "\n" + (typeof job.stdout === "string" ? job.stdout : "");
+    if (/\[VERIFIED-CLOSE\]/i.test(output)) {
+      await transitionIssueToDone(job.issueKey, `agent=${job.agent} jobId=${job.jobId}`);
+    }
+  } catch (e) {
+    console.error(`[strip-own-label] ${job.issueKey} failed: ${e.message}`);
+  }
+}
+
+/**
+ * Meeting gate quarantine.
+ *
+ * Meeting agents can create Jira issues with `agent:*` labels mid-conversation
+ * (via the Jira MCP). When the meeting then gates on approval, the periodic
+ * agent-label reconciler (every 15 min) can pick those issues up and dispatch
+ * them BEFORE the user approves — bypassing the gate entirely.
+ *
+ * Fix: on gate fire, find every issue created in the meeting's product project
+ * during the meeting window that carries any `agent:*` label, strip those
+ * labels, replace with `meeting-pending-approval`, and save the originals on
+ * the meeting record so /approve can restore them.
+ */
+const MEETING_QUARANTINE_LABEL = "meeting-pending-approval";
+
+async function quarantineMeetingCreatedIssues(meeting) {
+  if (!meeting?.productId || !meeting?.createdAt) return;
+  const product = products.get(meeting.productId);
+  const projectKey = product?.jira?.projectKey;
+  if (!projectKey) return;
+
+  const agentLabelMap = config.agentLabels || {};
+  const agentLabelKeys = Object.keys(agentLabelMap);
+  if (!agentLabelKeys.length) return;
+
+  // Jira JQL datetime: "yyyy-MM-dd HH:mm" (no seconds, no T separator).
+  const startStr = meeting.createdAt.replace("T", " ").substring(0, 16);
+  const labelClause = agentLabelKeys.map(l => `"${l}"`).join(", ");
+  const jql = encodeURIComponent(
+    `project = ${projectKey} AND created >= "${startStr}" AND labels in (${labelClause})`
+  );
+
+  try {
+    const res = await jiraRestGet(`/search/jql?jql=${jql}&fields=labels&maxResults=50`);
+    if (!res || res.statusCode !== 200) {
+      console.log(`[meeting-quarantine] ${meeting.meetingId}: JQL search failed (${res?.statusCode || "no response"})`);
+      return;
+    }
+    const issues = res.json?.issues || [];
+    if (!issues.length) {
+      console.log(`[meeting-quarantine] ${meeting.meetingId}: no agent-labelled issues created during meeting`);
+      return;
+    }
+
+    meeting.gatedIssueLabels = meeting.gatedIssueLabels || {};
+
+    for (const issue of issues) {
+      const issueKey = issue.key;
+      const labels = issue.fields?.labels || [];
+      const agentLabels = labels.filter(l => agentLabelMap[l]);
+      if (!agentLabels.length) continue;
+      // If we've already quarantined this one (e.g., from a prior refine cycle), preserve original map.
+      if (!meeting.gatedIssueLabels[issueKey]) {
+        meeting.gatedIssueLabels[issueKey] = agentLabels;
+      }
+      const newLabels = labels.filter(l => !agentLabelMap[l]);
+      if (!newLabels.includes(MEETING_QUARANTINE_LABEL)) newLabels.push(MEETING_QUARANTINE_LABEL);
+      try {
+        await jiraRestPut(`/issue/${issueKey}`, { fields: { labels: newLabels } });
+        console.log(`[meeting-quarantine] ${meeting.meetingId}/${issueKey}: stripped [${agentLabels.join(", ")}], added ${MEETING_QUARANTINE_LABEL}`);
+      } catch (e) {
+        console.error(`[meeting-quarantine] ${meeting.meetingId}/${issueKey}: PUT failed: ${e.message}`);
+      }
+    }
+    db.meetings.set(meeting).catch(e => console.error(`[db] meeting quarantine save failed: ${e.message}`));
+  } catch (e) {
+    console.error(`[meeting-quarantine] ${meeting.meetingId}: error: ${e.message}`);
+  }
+}
+
+async function unquarantineMeetingCreatedIssues(meeting) {
+  const savedMap = meeting?.gatedIssueLabels || {};
+  const keys = Object.keys(savedMap);
+  if (!keys.length) return;
+  for (const issueKey of keys) {
+    const saved = savedMap[issueKey] || [];
+    try {
+      const res = await jiraRestGet(`/issue/${issueKey}?fields=labels`);
+      if (!res || res.statusCode !== 200) continue;
+      const labels = res.json?.fields?.labels || [];
+      const restored = labels.filter(l => l !== MEETING_QUARANTINE_LABEL);
+      for (const l of saved) if (!restored.includes(l)) restored.push(l);
+      await jiraRestPut(`/issue/${issueKey}`, { fields: { labels: restored } });
+      console.log(`[meeting-unquarantine] ${meeting.meetingId}/${issueKey}: restored [${saved.join(", ")}], removed ${MEETING_QUARANTINE_LABEL}`);
+    } catch (e) {
+      console.error(`[meeting-unquarantine] ${meeting.meetingId}/${issueKey}: failed: ${e.message}`);
+    }
+  }
+}
+
+async function clearMeetingQuarantineOnly(meeting) {
+  const savedMap = meeting?.gatedIssueLabels || {};
+  const keys = Object.keys(savedMap);
+  if (!keys.length) return;
+  for (const issueKey of keys) {
+    try {
+      const res = await jiraRestGet(`/issue/${issueKey}?fields=labels`);
+      if (!res || res.statusCode !== 200) continue;
+      const labels = res.json?.fields?.labels || [];
+      const filtered = labels.filter(l => l !== MEETING_QUARANTINE_LABEL);
+      if (filtered.length === labels.length) continue;
+      await jiraRestPut(`/issue/${issueKey}`, { fields: { labels: filtered } });
+      console.log(`[meeting-quarantine-clear] ${meeting.meetingId}/${issueKey}: removed ${MEETING_QUARANTINE_LABEL} (work rejected)`);
+    } catch (e) {
+      console.error(`[meeting-quarantine-clear] ${meeting.meetingId}/${issueKey}: failed: ${e.message}`);
+    }
   }
 }
 
@@ -6022,44 +7574,56 @@ function getBlockingDependencies(issue) {
 }
 
 /**
- * Check if a branch for a given issue key has been merged into main.
+ * Check if a branch for a given issue key has been merged into a trunk branch (dev or main).
+ * Platform pattern is dev-only auto-merges (runner → dev, human-owned dev → main),
+ * so a branch landed on dev is "shipped" from the dependency-gate's perspective.
  * Looks for branch patterns: {issueKey}-auto, {issueKey}
  * Also checks pipeline records for completed+merged state.
  * Fails open (returns true) if git check errors — avoids blocking everything.
  */
-function isBranchMergedToMain(baseRepo, issueKey) {
+function isBranchMergedToTrunk(baseRepo, issueKey) {
   const { execSync } = require("child_process");
   const branchPatterns = [`${issueKey}-auto`, issueKey.toLowerCase()];
+  const trunks = config.dependencyGating?.trunkBranches || ["dev", "main"];
 
   try {
-    const merged = execSync("git branch --merged main", {
-      cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: ["pipe", "pipe", "pipe"]
-    });
-    const mergedBranches = merged.split("\n").map(b => b.trim().replace(/^\*\s*/, ""));
+    for (const trunk of trunks) {
+      let mergedBranches;
+      try {
+        const merged = execSync(`git branch --merged ${trunk}`, {
+          cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: ["pipe", "pipe", "pipe"]
+        });
+        mergedBranches = merged.split("\n").map(b => b.trim().replace(/^\*\s*/, ""));
+      } catch (_) {
+        // Trunk doesn't exist locally (e.g. only `main` in some repos) — skip it
+        continue;
+      }
 
-    for (const pattern of branchPatterns) {
-      if (mergedBranches.some(b => b === pattern)) return true;
+      for (const pattern of branchPatterns) {
+        if (mergedBranches.some(b => b === pattern)) return true;
+      }
+
+      // Issue key in merge commits on this trunk (branch may have been deleted after merge)
+      try {
+        const mergeLog = execSync(`git log --oneline --grep="${issueKey}" ${trunk} -5`, {
+          cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: ["pipe", "pipe", "pipe"]
+        });
+        if (mergeLog.trim().length > 0) return true;
+      } catch (_) { /* ignore */ }
     }
 
-    // Also check pipeline records — if a pipeline completed + merged, treat as merged
+    // Pipeline records — if a pipeline completed + merged, treat as merged
     for (const p of pipelines.values()) {
       if (p.issueKey === issueKey && p.status === "completed" && p.merged) return true;
     }
 
-    // Check if issue key appears in merge commits on main (branch may have been deleted after merge)
-    try {
-      const mergeLog = execSync(`git log --oneline --grep="${issueKey}" main -5`, {
-        cwd: baseRepo, encoding: "utf8", timeout: 10000, stdio: ["pipe", "pipe", "pipe"]
-      });
-      if (mergeLog.trim().length > 0) return true;
-    } catch (_) { /* ignore */ }
-
     return false;
   } catch (e) {
-    console.log(`[${nowIso()}] Dependency check: git branch --merged failed for ${baseRepo}: ${e.message}`);
+    console.log(`[${nowIso()}] Dependency check: trunk merge probe failed for ${baseRepo}: ${e.message}`);
     return true; // Fail open
   }
 }
+
 
 /**
  * Get unmerged blocking dependencies for an issue.
@@ -6093,15 +7657,15 @@ async function getUnmergedBlockers(issueKey, baseRepo) {
         const blockerStatus = link.inwardIssue.fields?.status?.name || "";
 
         if (blockerStatus.toLowerCase() === "done") {
-          // Blocker is Done in Jira — verify branch is actually merged to main
+          // Blocker is Done in Jira — verify branch is actually merged to a trunk (dev or main)
           if (config.dependencyGating?.checkGitMerge !== false) {
-            const merged = isBranchMergedToMain(baseRepo, blockerKey);
+            const merged = isBranchMergedToTrunk(baseRepo, blockerKey);
             if (!merged) {
               blockers.push({
                 key: blockerKey,
                 status: blockerStatus,
                 reason: "done-but-not-merged",
-                detail: `${blockerKey} is Done but branch not merged to main`
+                detail: `${blockerKey} is Done but branch not merged to dev or main`
               });
             }
           }
@@ -6362,7 +7926,7 @@ async function tickSprintRunner() {
         if (blockers.length > 0) {
           blocked.push({ key: issue.key, blockers });
         } else if (config.dependencyGating?.enabled && config.dependencyGating?.checkGitMerge !== false && workingDir) {
-          // Additional check: verify "Done" blockers' branches are actually merged to main
+          // Additional check: verify "Done" blockers' branches are actually merged to a trunk (dev or main)
           const links = issue.fields?.issuelinks || [];
           const unmergedDone = [];
           for (const link of links) {
@@ -6370,7 +7934,7 @@ async function tickSprintRunner() {
               const depStatus = (link.inwardIssue.fields?.status?.name || "").toLowerCase();
               if (depStatus === "done") {
                 const depKey = link.inwardIssue.key;
-                if (!isBranchMergedToMain(workingDir, depKey)) {
+                if (!isBranchMergedToTrunk(workingDir, depKey)) {
                   unmergedDone.push({ key: depKey, status: "Done (not merged)", type: "done-but-not-merged" });
                 }
               }
@@ -6810,6 +8374,249 @@ async function tickSprintRunner() {
   }
 }
 
+/**
+ * Find which product owns a given Jira issue key (by project key prefix).
+ */
+function resolveProductForIssueKey(issueKey) {
+  if (!issueKey) return null;
+  const projectKey = String(issueKey).split("-")[0]?.toUpperCase();
+  if (!projectKey) return null;
+  for (const [productId, product] of products) {
+    if ((product.jira?.projectKey || "").toUpperCase() === projectKey) {
+      return { productId, product };
+    }
+  }
+  return null;
+}
+
+/**
+ * Dispatch any agent:* labels currently on a Jira issue that aren't already
+ * being worked. This is the core of the agent-label reconciler — used both
+ * by the periodic sweep (B) and the post-job-completion hot path (A).
+ *
+ * @param {string} issueKey - Jira issue key (e.g., "EOS-664")
+ * @param {object} opts
+ * @param {string} [opts.excludeAgent] - Skip this agent (avoid self-redispatch when called from job completion)
+ * @param {string} [opts.reason] - Logged with dispatch (e.g., "post-job-completion", "reconciler-sweep")
+ * @param {object} [opts.preloadedIssue] - Issue JSON if already fetched, avoids extra REST call
+ * @returns {Promise<{dispatched: string[], skipped: string[]}>}
+ */
+async function dispatchAgentLabelsForIssue(issueKey, opts = {}) {
+  const { excludeAgent, reason = "agent-label-reconciler", preloadedIssue } = opts;
+  const result = { dispatched: [], skipped: [] };
+
+  const resolved = resolveProductForIssueKey(issueKey);
+  if (!resolved) {
+    result.skipped.push(`${issueKey}: no product matches project key`);
+    return result;
+  }
+  const { productId, product } = resolved;
+  const workingDir = resolveProductWorkingDir(product);
+  if (!workingDir) {
+    result.skipped.push(`${issueKey}: product ${productId} has no workingDir`);
+    return result;
+  }
+
+  let issue = preloadedIssue;
+  if (!issue) {
+    const res = await jiraRestGet(`/issue/${issueKey}?fields=summary,status,issuetype,labels,priority,parent`);
+    if (!res || res.statusCode !== 200) {
+      result.skipped.push(`${issueKey}: failed to fetch (${res?.statusCode || "no response"})`);
+      return result;
+    }
+    issue = res.json;
+  }
+
+  const statusName = (issue.fields?.status?.name || "").toLowerCase();
+  const statusCategory = (issue.fields?.status?.statusCategory?.key || "").toLowerCase();
+  if (statusName === "done" || statusName === "closed" || statusCategory === "done") {
+    result.skipped.push(`${issueKey}: status is ${statusName}`);
+    return result;
+  }
+
+  const issueLabels = issue.fields?.labels || [];
+  const skipLabels = config.agentLabelReconciler?.skipLabels || [];
+  const lowerIssueLabels = issueLabels.map(l => l.toLowerCase());
+  const matchedSkipLabel = skipLabels.find(sl => {
+    const pattern = sl.toLowerCase();
+    if (pattern.endsWith("*")) {
+      const prefix = pattern.slice(0, -1);
+      return lowerIssueLabels.some(l => l.startsWith(prefix));
+    }
+    return lowerIssueLabels.includes(pattern);
+  });
+  if (matchedSkipLabel) {
+    result.skipped.push(`${issueKey}: has skip-label (${matchedSkipLabel})`);
+    return result;
+  }
+
+  const agentLabelMap = config.agentLabels || {};
+  const matchedLabels = issueLabels.filter(l => agentLabelMap[l]);
+  if (matchedLabels.length === 0) {
+    result.skipped.push(`${issueKey}: no agent:* labels`);
+    return result;
+  }
+
+  for (const label of matchedLabels) {
+    const agentName = agentLabelMap[label];
+    if (excludeAgent && agentName === excludeAgent) {
+      result.skipped.push(`${issueKey}/${agentName}: excludeAgent`);
+      continue;
+    }
+
+    // Check for an active (non-terminal) job on this issue+agent
+    let activeJob = null;
+    for (const j of jobs.values()) {
+      if (j.issueKey === issueKey && j.agent === agentName &&
+          ["queued", "running", "retry-pending"].includes(j.status)) {
+        activeJob = j;
+        break;
+      }
+    }
+    if (activeJob) {
+      result.skipped.push(`${issueKey}/${agentName}: active job ${activeJob.jobId} (${activeJob.status})`);
+      continue;
+    }
+
+    // Check for an active pipeline phase running this agent for this issue
+    let activePipelinePhase = null;
+    for (const p of pipelines.values()) {
+      if (p.issueKey === issueKey && ["running", "blocked"].includes(p.status)) {
+        const ph = p.phases?.find(ph => ph.agent === agentName && ["running", "pending"].includes(ph.status));
+        if (ph) { activePipelinePhase = { pipelineId: p.pipelineId, phase: ph.name }; break; }
+      }
+    }
+    if (activePipelinePhase) {
+      result.skipped.push(`${issueKey}/${agentName}: active pipeline ${activePipelinePhase.pipelineId} phase ${activePipelinePhase.phase}`);
+      continue;
+    }
+
+    // Idempotency — separate namespace from sprint-runner
+    const idempotencyKey = `agent-label:${issueKey}:${agentName}`;
+    const ttlMs = (config.agentLabelReconciler?.idempotencyMinutes || 30) * 60 * 1000;
+    const existing = idempotencyStore[idempotencyKey];
+    if (existing && (Date.now() - new Date(existing.createdAt).getTime()) < ttlMs) {
+      result.skipped.push(`${issueKey}/${agentName}: idempotency hit (${idempotencyKey})`);
+      continue;
+    }
+
+    const issueType = (issue.fields?.issuetype?.name || "").toLowerCase();
+    const isSubtask = issueType === "sub-task" || issueType === "subtask";
+    const telegram = product.telegram?.chatId ? { chatId: String(product.telegram.chatId) } : null;
+
+    const jobId = makeJobId();
+    const logFile = path.join(LOG_DIR, `${jobId}.log`);
+    const metaFile = path.join(LOG_DIR, `${jobId}.json`);
+    const job = {
+      jobId,
+      mode: "delivery",
+      issueKey: String(issueKey),
+      summary: issue.fields?.summary || "",
+      description: "",
+      workingDir,
+      agent: agentName,
+      model: config.routing?.agentToModel?.[agentName] || null,
+      requestedProvider: null,
+      selectedModel: null,
+      status: "queued",
+      createdAt: nowIso(),
+      startedAt: null,
+      finishedAt: null,
+      logFile,
+      metaFile,
+      processPid: null,
+      error: null,
+      lastError: null,
+      parsedOutput: null,
+      retryCount: 0,
+      maxRetries: MAX_RETRIES,
+      retryAt: null,
+      qualityGateRetryCount: 0,
+      qualityGateFailure: null,
+      qualityGate: null,
+      usage: null,
+      callbackUrl: N8N_CALLBACK_URL || null,
+      slack: null,
+      telegram,
+      batchId: null,
+      parentKey: isSubtask ? (issue.fields?.parent?.key || null) : null,
+      subtaskFiles: null,
+      subtaskDepth: 0,
+      isSubtask,
+      source: `agent-label-reconciler:${reason}`,
+      teamSessionId: null,
+      teamRole: null,
+      teammates: [],
+    };
+    jobs.set(jobId, job);
+    db.jobs.set(job).catch(e => console.error(`[db] Failed to persist reconciler job ${jobId}: ${e.message}`));
+    fs.writeFileSync(metaFile, JSON.stringify(job, null, 2), "utf8");
+
+    idempotencyStore[idempotencyKey] = { jobId, createdAt: nowIso() };
+    db.idempotency.set(idempotencyKey, jobId).catch(e => console.error('[db] idempotency persist failed: ' + e.message));
+    saveIdempotency(idempotencyStore);
+
+    enqueue(jobId);
+    console.log(`[agent-label-reconciler] Dispatched ${issueKey} → ${agentName} (job: ${jobId}, label: ${label}, reason: ${reason}, product: ${productId})`);
+    result.dispatched.push(`${issueKey}/${agentName}`);
+  }
+  return result;
+}
+
+/**
+ * Periodic sweep: scan every product's Jira project for issues with agent:*
+ * labels that are not Done. Dispatches anything the sprint-runner missed
+ * (in-flight issues, webhook drops, manual labels).
+ */
+async function tickAgentLabelReconciler() {
+  const cfg = config.agentLabelReconciler || {};
+  if (!cfg.enabled) return;
+
+  const { email, apiToken } = config.jira || {};
+  if (!email || !apiToken) {
+    console.log(`[agent-label-reconciler] Skipped: JIRA credentials not configured`);
+    return;
+  }
+
+  const agentLabelMap = config.agentLabels || {};
+  const labelKeys = Object.keys(agentLabelMap);
+  if (labelKeys.length === 0) return;
+
+  const lookbackDays = cfg.lookbackDays || 14;
+  const maxPerProduct = cfg.maxPerProductCycle || 10;
+
+  for (const [productId, product] of products) {
+    const projectKey = product.jira?.projectKey;
+    if (!projectKey) continue;
+    try {
+      const labelClause = labelKeys.map(l => `"${l}"`).join(", ");
+      const jql = encodeURIComponent(
+        `project = ${projectKey} AND statusCategory != Done AND labels in (${labelClause}) AND updated > -${lookbackDays}d ORDER BY updated DESC`
+      );
+      const res = await jiraRestGet(`/search/jql?jql=${jql}&fields=summary,status,issuetype,labels,priority,parent&maxResults=${maxPerProduct}`);
+      if (!res || res.statusCode !== 200) {
+        console.log(`[agent-label-reconciler] Product ${productId}: search failed (${res?.statusCode || "no response"})`);
+        continue;
+      }
+      const issues = res.json?.issues || [];
+      let dispatchedCount = 0, skippedCount = 0;
+      for (const issue of issues) {
+        const r = await dispatchAgentLabelsForIssue(issue.key, {
+          reason: "reconciler-sweep",
+          preloadedIssue: issue,
+        });
+        dispatchedCount += r.dispatched.length;
+        skippedCount += r.skipped.length;
+      }
+      if (dispatchedCount > 0 || issues.length > 0) {
+        console.log(`[agent-label-reconciler] Product ${productId}: scanned ${issues.length} issue(s), dispatched ${dispatchedCount}, skipped ${skippedCount}`);
+      }
+    } catch (e) {
+      console.error(`[agent-label-reconciler] Product ${productId} error: ${e.message}`);
+    }
+  }
+}
+
 // Initialize PostgreSQL and load state from DB
 (async () => {
   try {
@@ -7181,22 +8988,56 @@ function convPath(conversationId) {
   return path.join(CONV_DIR, safeKeyToFilename(conversationId));
 }
 
-function loadConversation(conversationId) {
+/**
+ * Load conversation messages from PostgreSQL.
+ * On a DB miss, checks for a legacy file at CONV_DIR and migrates it into the DB
+ * (one-time per channel), then deletes the file.
+ *
+ * @param {string} conversationId
+ * @returns {Promise<{conversationId: string, messages: Array}>}
+ */
+async function loadConversation(conversationId) {
   try {
-    const p = convPath(conversationId);
-    if (!fs.existsSync(p)) return { conversationId, messages: [] };
-    const obj = JSON.parse(fs.readFileSync(p, "utf8"));
-    if (!obj || !Array.isArray(obj.messages)) return { conversationId, messages: [] };
-    return { conversationId, messages: obj.messages };
-  } catch {
+    const turns = await db.conversations.load(conversationId);
+    if (turns !== null) {
+      return { conversationId, messages: turns };
+    }
+
+    // DB miss — check for a legacy file and migrate if found
+    const legacyPath = convPath(conversationId);
+    if (fs.existsSync(legacyPath)) {
+      try {
+        const obj = JSON.parse(fs.readFileSync(legacyPath, "utf8"));
+        const messages = Array.isArray(obj?.messages) ? obj.messages : [];
+        await db.conversations.save(conversationId, messages, null);
+        try { fs.unlinkSync(legacyPath); } catch (_) { /* best-effort delete */ }
+        return { conversationId, messages };
+      } catch (migErr) {
+        console.warn(`[conv] Migration failed for ${conversationId}: ${migErr.message}`);
+      }
+    }
+
+    return { conversationId, messages: [] };
+  } catch (err) {
+    console.warn(`[conv] loadConversation error for ${conversationId}: ${err.message}`);
     return { conversationId, messages: [] };
   }
 }
 
-function saveConversation(conversationId, messages) {
-  const p = convPath(conversationId);
-  const out = { conversationId, updatedAt: nowIso(), messages };
-  fs.writeFileSync(p, JSON.stringify(out, null, 2), "utf8");
+/**
+ * Save conversation messages to PostgreSQL only.
+ * File-based writes no longer occur; CONV_DIR is only used for legacy migration.
+ *
+ * @param {string} conversationId
+ * @param {Array} messages
+ * @param {string|null} [productId]
+ */
+async function saveConversation(conversationId, messages, productId) {
+  try {
+    await db.conversations.save(conversationId, messages, productId || null);
+  } catch (err) {
+    console.error(`[conv] saveConversation error for ${conversationId}: ${err.message}`);
+  }
 }
 
 function trimConversationMessages(messages) {
@@ -9044,8 +10885,11 @@ async function runClaude(job) {
     // No session persistence: runner jobs are one-shot, don't save sessions to disk
     args.push("--no-session-persistence");
 
-    // Effort level: low for haiku only (chat needs normal effort to read persona prompts)
-    if (model === "haiku") {
+    // Effort level: low for haiku, xhigh for agents in routing.agentEffort map
+    const agentEffort = config.routing?.agentEffort?.[job.agent];
+    if (agentEffort) {
+      args.push("--effort", agentEffort);
+    } else if (model === "haiku") {
       args.push("--effort", "low");
     }
 
@@ -9105,6 +10949,16 @@ async function runClaude(job) {
       applyProductPluginDir(args, jobProduct);
     }
 
+    // Per-agent MCP allowlist: build a filtered .mcp.json and pass via --mcp-config + --strict-mcp-config
+    // This suppresses fan-out of MCP servers the agent doesn't need (memory pressure mitigation).
+    if (provider === 'claude') {
+      const filteredMcp = buildFilteredMcpConfig(job.agent, jobProduct, job.jobId, job.workingDir, optimizedDir);
+      if (filteredMcp) {
+        args.push('--mcp-config', filteredMcp, '--strict-mcp-config');
+        appendLog(job.logFile, `[${nowIso()}] MCP allowlist active: ${filteredMcp}\n`);
+      }
+    }
+
     // Pass prompt via stdin to avoid very long CLI args that may cause issues
     let promptViaStdin = prompt;
 
@@ -9145,6 +10999,13 @@ async function runClaude(job) {
       spawnEnv.CLAUDE_CODE_TASK_LIST_ID = job.issueKey;
       appendLog(job.logFile, `[${nowIso()}] Task list: ${job.issueKey} (shared across phases)\n`);
     }
+    if (job.agent) spawnEnv.CERTPILOT_AGENT = job.agent;
+    if (job.issueKey) spawnEnv.CERTPILOT_ISSUE = job.issueKey;
+    const _jobProductId = resolveProduct(job.workingDir);
+    if (_jobProductId) spawnEnv.CERTPILOT_PRODUCT = _jobProductId;
+    if (Array.isArray(job.labels) && job.labels.length) spawnEnv.CERTPILOT_LABELS = job.labels.join(",");
+    spawnEnv.CERTPILOT_RUNNER_URL = process.env.RUNNER_INTERNAL_URL || `http://runner:${config.port || 3210}`;
+    if (process.env.RUNNER_SECRET) spawnEnv.CERTPILOT_RUNNER_SECRET = process.env.RUNNER_SECRET;
 
     // Agent Teams: enable for team lead agents (skip for hybrid — runner manages teammates)
     if (config.teams?.enabled && config.teams.teamLeads?.[job.agent] && !job._hybridTeam) {
@@ -9214,20 +11075,20 @@ async function runClaude(job) {
             const toolList = event.tools || [];
             appendLog(job.logFile, `[${nowIso()}] Stream: session init model=${event.model} tools=${toolList.length}\n`);
 
-            // MCP health check: verify MCP tools loaded when plugin has .mcp.json
+            // MCP eager-load check: warn if n8n-jira-mcp tools aren't in the eager list.
+            // Not fatal — MCP tools may still be available via tool-search/deferral, and
+            // the agent can fall back to direct REST. Killing the process here was
+            // causing SIGTERM cascades for jobs that would otherwise have succeeded.
             const jobProductForMcp = resolveProduct(job.workingDir);
             if (jobProductForMcp) {
               const mcpJsonPath = path.join(resolvePluginDir(jobProductForMcp), ".mcp.json");
               try {
                 const mcpConfig = JSON.parse(fs.readFileSync(mcpJsonPath, "utf8"));
                 const expectedServers = Object.keys(mcpConfig.mcpServers || {});
-                // Only check for n8n-jira-mcp which is critical for all pipelines
                 const hasJiraMcp = toolList.some(t => typeof t === "string" ? t.includes("jira-mcp") : (t.name || "").includes("jira-mcp"));
                 if (expectedServers.includes("n8n-jira-mcp") && !hasJiraMcp) {
-                  const msg = `MCP health check failed: n8n-jira-mcp expected but not found in ${toolList.length} tools. MCP server may be down.`;
+                  const msg = `MCP eager-load: n8n-jira-mcp not in ${toolList.length} eager tools (deferral assumed; agent may need ToolSearch).`;
                   appendLog(job.logFile, `[${nowIso()}] ${msg}\n`);
-                  console.error(`[${nowIso()}] [${job.jobId}] ${msg}`);
-                  try { child.kill("SIGTERM"); } catch {}
                 }
               } catch { /* no .mcp.json or unreadable — skip check */ }
             }
@@ -9684,11 +11545,19 @@ async function repairQualityGateFailure(job, failedCheck, attempt) {
 async function tickWorker() {
   if (queue.length === 0) return;
 
-  // Find first job in queue whose product has available capacity
+  // Find first job in queue whose product has available capacity and no unresolved deps
   let idx = -1;
   for (let i = 0; i < queue.length; i++) {
     const candidate = jobs.get(queue[i].jobId);
     if (!candidate || candidate.status === "cancelled") { idx = i; break; } // will be cleaned up
+    // Skip jobs still waiting on a dependency to complete
+    if (candidate.blockedByJobIds?.length) {
+      const isBlocked = candidate.blockedByJobIds.some(id => {
+        const dep = jobs.get(id);
+        return !dep || dep.status !== "succeeded";
+      });
+      if (isBlocked) continue;
+    }
     const pid = getProductIdForJob(candidate);
     if (getRunningForProduct(pid) < MAX_CONCURRENCY_PER_PRODUCT) {
       idx = i;
@@ -9956,14 +11825,14 @@ async function tickWorker() {
       const parsed = job.parsedOutput;
       const assistantText = extractAssistantText(parsed);
 
-      const conv = loadConversation(job.conversationId);
+      const conv = await loadConversation(job.conversationId);
       const updated = trimConversationMessages([
         ...(conv.messages || []),
         { role: "user", content: job.message, ts: nowIso() },
         ...(assistantText ? [{ role: "assistant", content: assistantText, ts: nowIso() }] : []),
       ]);
 
-      saveConversation(job.conversationId, updated);
+      await saveConversation(job.conversationId, updated, job._productId || null);
     }
 
     fs.writeFileSync(job.metaFile, JSON.stringify({ ...job, stdout: undefined, stderr: undefined }, null, 2), "utf8");
@@ -10053,13 +11922,13 @@ async function tickWorker() {
 
     // Still append the user message to memory so context isn't lost
     if (job.mode === "chat" && job.conversationId) {
-      const conv = loadConversation(job.conversationId);
+      const conv = await loadConversation(job.conversationId);
       const updated = trimConversationMessages([
         ...(conv.messages || []),
         { role: "user", content: job.message, ts: nowIso() },
         { role: "assistant", content: `ERROR: ${job.error}`, ts: nowIso() },
       ]);
-      saveConversation(job.conversationId, updated);
+      await saveConversation(job.conversationId, updated, job._productId || null);
     }
 
     fs.writeFileSync(job.metaFile, JSON.stringify({ ...job, stdout: undefined, stderr: undefined }, null, 2), "utf8");
@@ -10132,6 +12001,21 @@ async function tickWorker() {
       setImmediate(() => {
         onPipelinePhaseComplete(pipeline, job.pipelinePhaseIndex, job).catch(e => {
           console.error(`[${nowIso()}] Pipeline phase completion error (${job.pipelineId}): ${e.message}`);
+        });
+      });
+    }
+  }
+
+  // Merge-conflict resolver completion hook
+  // Resolver jobs have source=pipeline:<id>:merge-conflict but no pipelinePhaseIndex.
+  // When they succeed, finalize the upstream pipeline so Jira auto-transitions and
+  // dependency-blocked downstream pipelines unblock on the next ticker pass.
+  if (job.pipelineId && typeof job.source === "string" && job.source.endsWith(":merge-conflict") && job.status === "succeeded") {
+    const pipeline = pipelines.get(job.pipelineId);
+    if (pipeline && !pipeline.merged) {
+      setImmediate(() => {
+        finalizeMergeConflictResolution(pipeline, job).catch(e => {
+          console.error(`[${nowIso()}] finalizeMergeConflictResolution error (${job.pipelineId}): ${e.message}`);
         });
       });
     }
@@ -10212,6 +12096,87 @@ async function tickWorker() {
     setImmediate(() => accelerateScheduledItems(job));
   }
 
+  // Standalone implementer auto-merge: when engineer-implementer finishes outside
+  // a pipeline (label-driven dispatch), the implementer's agent definition tells
+  // it the runner will merge into dev. Pipelines do this on completion, but
+  // label-driven flows had no equivalent — branches piled up unmerged. This hook
+  // mirrors mergePipelineBranchIntoDev() for the non-pipeline path.
+  if (job.status === "succeeded" &&
+      job.agent === "engineer-implementer" &&
+      job.issueKey &&
+      job.workingDir &&
+      !job.pipelineId &&
+      !job.teamSessionId &&
+      !job.isSubtask) {
+    setImmediate(async () => {
+      try {
+        await withMergeLock(job.workingDir, async () => {
+          const { execSync } = require("child_process");
+          const candidates = [
+            `${job.issueKey}-auto`,
+            `${job.issueKey.toLowerCase()}-auto`,
+            `feature/${job.issueKey}`,
+          ];
+          let branchName = null;
+          for (const c of candidates) {
+            try {
+              execSync(`git rev-parse --verify ${c}`, { cwd: job.workingDir, encoding: "utf8", timeout: 5000, stdio: "pipe" });
+              branchName = c; break;
+            } catch { /* try next */ }
+          }
+          if (!branchName) {
+            console.log(`[${nowIso()}] standalone-merge: no feature branch found for ${job.issueKey} in ${job.workingDir}`);
+            return;
+          }
+          try {
+            const result = mergeBranchIntoDev(job.workingDir, branchName, job.issueKey);
+            if (result) {
+              console.log(`[${nowIso()}] standalone-merge: ${branchName} -> ${result.mergeBranch}@${(result.devSha || "").slice(0, 8)} (${result.mode})`);
+              appendLog(job.logFile, `[${nowIso()}] standalone-merge: ${branchName} -> ${result.mergeBranch}@${(result.devSha || "").slice(0, 8)}\n`);
+              // Strip downstream agent labels — the merge supersedes any pending
+              // reviewer/QA/PM dispatch on this issue. Without this the reconciler
+              // re-fires read-only agents that have nothing to do.
+              try {
+                await stripDownstreamLabelsAfterMerge(job.issueKey).catch(() => {});
+              } catch { /* best-effort */ }
+            }
+          } catch (e) {
+            if (e.conflictContext) {
+              console.warn(`[${nowIso()}] standalone-merge conflict for ${job.issueKey}: ${e.conflictContext.branchName}`);
+            } else {
+              console.error(`[${nowIso()}] standalone-merge failed for ${job.issueKey}: ${e.message}`);
+            }
+          }
+        });
+      } catch (e) {
+        console.error(`[${nowIso()}] standalone-merge hook error for ${job.issueKey}: ${e.message}`);
+      }
+    });
+  }
+
+  // Hot-path agent-label dispatch: when an agent finishes and writes routing
+  // labels to its issue (via Jira MCP), fire the next agent immediately rather
+  // than waiting for the periodic reconciler. Before dispatching, strip the
+  // just-completed agent's own labels so the periodic reconciler doesn't re-
+  // fire it on the next tick. excludeAgent is a belt-and-braces second guard.
+  if (job.status === "succeeded" && job.issueKey && config.agentLabelReconciler?.enabled) {
+    setImmediate(async () => {
+      try {
+        await stripOwnAgentLabelsOnSuccess(job);
+      } catch (e) {
+        console.error(`[strip-own-label] Post-job hook failed for ${job.issueKey}: ${e.message}`);
+      }
+      try {
+        await dispatchAgentLabelsForIssue(job.issueKey, {
+          excludeAgent: job.agent,
+          reason: `post-job:${job.jobId}`,
+        });
+      } catch (e) {
+        console.error(`[agent-label-reconciler] Post-job hook failed for ${job.issueKey}: ${e.message}`);
+      }
+    });
+  }
+
   // Auto-dispatch bug-fix pipeline after successful bug-triage
   // This runs in-process — no N8N callback dependency
   if (job.agent === "bug-triage" && job.status === "succeeded" && job.issueKey && !job.pipelineId) {
@@ -10246,6 +12211,20 @@ async function tickWorker() {
     closeMeetingJiraTask(job).catch(e => {
       console.error(`[${nowIso()}] Meeting Jira task closure failed for ${job.jobId}: ${e.message}`);
     });
+
+    // Unblock any dependent meeting jobs now that this one succeeded
+    const completedJobId = job.jobId;
+    let unblocked = 0;
+    for (const [, queuedJob] of jobs) {
+      if (queuedJob.status === "queued" && queuedJob.blockedByJobIds?.includes(completedJobId)) {
+        queuedJob.blockedByJobIds = queuedJob.blockedByJobIds.filter(id => id !== completedJobId);
+        unblocked++;
+      }
+    }
+    if (unblocked > 0) {
+      console.log(`[${nowIso()}] Meeting ${job.meetingAction.meetingId}: Unblocked ${unblocked} dependent job(s) after ${completedJobId} succeeded`);
+      setImmediate(tickWorker);
+    }
   }
 
   // Auto-dispatch video-renderer after successful user-guide-agent completion
@@ -10629,7 +12608,7 @@ app.post("/run", requireSecret, (req, res) => {
  * Body:
  *  { agent, message, conversationId, workingDir(optional), slack(optional), callbackUrl(required for replies) }
  */
-app.post("/chat", requireSecret, (req, res) => {
+app.post("/chat", requireSecret, async (req, res) => {
   if (shuttingDown) return res.status(503).json({ ok: false, error: "Server shutting down" });
   const budgetCheck = checkBudget();
   if (!budgetCheck.ok) return res.status(429).json({ ok: false, error: budgetCheck.reason, status: "budget-exceeded" });
@@ -10659,7 +12638,7 @@ app.post("/chat", requireSecret, (req, res) => {
   }
 
   // Load and prepare history text
-  const conv = loadConversation(conversationId);
+  const conv = await loadConversation(conversationId);
   const trimmed = trimConversationMessages(conv.messages || []);
   const historyText = formatConversationForPrompt(trimmed);
 
@@ -10994,6 +12973,7 @@ app.post("/meeting", requireSecret, (req, res) => {
     workingDir: resolvedWorkingDir,
     telegram: body.telegram || (config.meetings?.defaultTelegramChatId ? { chatId: config.meetings.defaultTelegramChatId } : null),
     callbackUrl: body.callbackUrl || N8N_CALLBACK_URL || null,
+    gateBeforeDispatch: body.gateBeforeDispatch === true,
   });
 
   console.log(`[${nowIso()}] Meeting created: ${meeting.meetingId} topic="${meeting.topic}" mode=${meeting.mode} chair=${meeting.chair} agents=[${meeting.agents.join(",")}] autoDiscuss=${autoDiscuss} rounds=${maxRounds} maxTurns=${meeting.maxTurns} workingDir=${meeting.workingDir} productId=${meeting.productId || "NONE"} callbackUrl=${meeting.callbackUrl || "NONE"} telegram=${JSON.stringify(meeting.telegram)}`);
@@ -11168,10 +13148,159 @@ app.post("/meeting/:id/end", requireSecret, async (req, res) => {
   return res.json({
     ok: true,
     meetingId: meeting.meetingId,
-    status: "ended",
+    status: meeting.status,
     summary: meeting.summary,
-    messageCount: meeting.transcript.length,
   });
+});
+
+/**
+ * POST /meeting/:id/decision — resolve a gated meeting that's awaiting human approval.
+ * Body: { decision: "approve" | "reject" | "refine", refinement?: string, decidedBy?: string }
+ * approve → run dispatchMeetingActions + postMeetingOutcomes (Confluence + Jira), mark ended
+ * reject  → mark ended without dispatch, no Confluence/Jira side-effects
+ * refine  → append guidance to transcript, restart chair discussion (cap = 3 cycles)
+ */
+app.post("/meeting/:id/decision", requireSecret, async (req, res) => {
+  const meeting = await getMeeting(req.params.id);
+  if (!meeting) return res.status(404).json({ ok: false, error: "Meeting not found" });
+  if (meeting.status !== "awaiting-approval" || !meeting.awaitingApproval) {
+    return res.status(400).json({ ok: false, error: `Meeting is ${meeting.status}, not awaiting-approval` });
+  }
+
+  const body = req.body || {};
+  const decision = String(body.decision || "").toLowerCase();
+  const decidedBy = body.decidedBy || "Mark";
+  if (!["approve", "reject", "refine"].includes(decision)) {
+    return res.status(400).json({ ok: false, error: "decision must be approve|reject|refine" });
+  }
+
+  meeting.decision = { decision, refinement: body.refinement || null, decidedBy, decidedAt: nowIso() };
+
+  if (decision === "approve") {
+    meeting.awaitingApproval = false;
+    meeting.status = "ended";
+    meeting.endedAt = nowIso();
+    db.meetings.set(meeting).catch(e => console.error('[db] meeting update failed: ' + e.message));
+
+    // Notify Telegram that dispatch is starting.
+    if (meeting.callbackUrl && meeting.telegram) {
+      sendMeetingCallback(meeting.callbackUrl, {
+        event: "meeting:agent-response",
+        meetingId: meeting.meetingId,
+        agent: "Meeting — Approved",
+        content: `_Approved by ${decidedBy}. Dispatching action items + writing minutes…_`,
+        telegram: meeting.telegram,
+        topic: meeting.topic,
+      });
+    }
+
+    // Restore the agent:* labels we stripped at gate time so the reconciler (and
+    // the dispatch path) can pick up any meeting-created issues. Awaited so the
+    // labels are back in place before dispatchMeetingActions fires.
+    await unquarantineMeetingCreatedIssues(meeting).catch(e =>
+      console.error(`[meeting-unquarantine] ${meeting.meetingId}: ${e.message}`)
+    );
+
+    // Fire dispatch + outcomes (these are async, fire-and-forget — same as the ungated path).
+    postMeetingOutcomes(meeting).catch(e => {
+      console.error(`[${nowIso()}] Meeting ${meeting.meetingId}: postMeetingOutcomes error: ${e.message}`);
+    });
+    dispatchMeetingActions(meeting).catch(e => {
+      console.error(`[${nowIso()}] Meeting ${meeting.meetingId}: dispatchMeetingActions error: ${e.message}`);
+    });
+
+    if (config.sseEnabled) {
+      jobEmitter.emit("meeting:approved", { meetingId: meeting.meetingId });
+    }
+    console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: APPROVED by ${decidedBy} — dispatching`);
+    return res.json({ ok: true, meetingId: meeting.meetingId, status: meeting.status, action: "dispatched" });
+  }
+
+  if (decision === "reject") {
+    meeting.awaitingApproval = false;
+    meeting.status = "rejected";
+    meeting.endedAt = nowIso();
+    db.meetings.set(meeting).catch(e => console.error('[db] meeting update failed: ' + e.message));
+
+    // Remove meeting-pending-approval label; agent:* labels stay off so the
+    // rejected work doesn't get picked up by the reconciler.
+    await clearMeetingQuarantineOnly(meeting).catch(e =>
+      console.error(`[meeting-quarantine-clear] ${meeting.meetingId}: ${e.message}`)
+    );
+
+    if (meeting.callbackUrl && meeting.telegram) {
+      sendMeetingCallback(meeting.callbackUrl, {
+        event: "meeting:agent-response",
+        meetingId: meeting.meetingId,
+        agent: "Meeting — Rejected",
+        content: `_Rejected by ${decidedBy}. Nothing dispatched. Transcript retained in runner._`,
+        telegram: meeting.telegram,
+        topic: meeting.topic,
+      });
+    }
+
+    if (config.sseEnabled) {
+      jobEmitter.emit("meeting:rejected", { meetingId: meeting.meetingId });
+    }
+    console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: REJECTED by ${decidedBy}`);
+    return res.json({ ok: true, meetingId: meeting.meetingId, status: meeting.status, action: "rejected" });
+  }
+
+  // refine
+  if ((meeting.refinementsUsed || 0) >= 3) {
+    return res.status(400).json({
+      ok: false,
+      error: "Refinement cap reached (3). Approve, reject, or end the meeting via the dashboard.",
+    });
+  }
+  const refinement = String(body.refinement || "").trim();
+  if (!refinement) {
+    return res.status(400).json({ ok: false, error: "refinement text required for decision=refine" });
+  }
+  meeting.refinementsUsed = (meeting.refinementsUsed || 0) + 1;
+  meeting.awaitingApproval = false;
+  meeting.status = "active";
+  meeting.summary = null; // re-generated after refined discussion
+  meeting.transcript.push({
+    role: "user",
+    agent: null,
+    name: decidedBy,
+    content: `[Refinement #${meeting.refinementsUsed}] ${refinement}`,
+    timestamp: nowIso(),
+  });
+  // Top up turn budget so the chair can actually resume.
+  meeting.maxTurns = (meeting.maxTurns || 0) + 6;
+  db.meetings.set(meeting).catch(e => console.error('[db] meeting update failed: ' + e.message));
+
+  // Respond immediately, then resume discussion in the background.
+  res.json({
+    ok: true,
+    meetingId: meeting.meetingId,
+    status: meeting.status,
+    action: "refining",
+    refinementsUsed: meeting.refinementsUsed,
+  });
+
+  if (meeting.callbackUrl && meeting.telegram) {
+    sendMeetingCallback(meeting.callbackUrl, {
+      event: "meeting:agent-response",
+      meetingId: meeting.meetingId,
+      agent: "Meeting — Refining",
+      content: `_${decidedBy} added guidance (refinement ${meeting.refinementsUsed}/3). Resuming discussion…_\n\n> ${refinement.substring(0, 800)}`,
+      telegram: meeting.telegram,
+      topic: meeting.topic,
+    });
+  }
+
+  const discussFn = meeting.mode === "chair" ? runChairDiscussion : runAutoDiscussion;
+  discussFn(meeting).catch(err => {
+    console.error(`[${nowIso()}] refine-discussion error for ${meeting.meetingId}: ${err.message}`);
+    meeting.status = "ended";
+    meeting.endedAt = nowIso();
+    meeting.summary = (meeting.summary || "") + `\n\n_Refinement failed: ${err.message}_`;
+    db.meetings.set(meeting).catch(e => console.error('[db] meeting update failed: ' + e.message));
+  });
+  console.log(`[${nowIso()}] Meeting ${meeting.meetingId}: REFINING (#${meeting.refinementsUsed}) by ${decidedBy}`);
 });
 
 /**
@@ -11731,7 +13860,7 @@ app.get("/events", requireSecret, (req, res) => {
     "job:progress",
     "pipeline:created", "pipeline:phase-started", "pipeline:phase-complete",
     "pipeline:gate-passed", "pipeline:gate-failed", "pipeline:completed", "pipeline:failed",
-    "pipeline:fix-loop",
+    "pipeline:fix-loop", "pipeline:verify-fix-loop",
   ];
   const listeners = events.map(event => {
     const listener = (data) => {
@@ -11776,6 +13905,46 @@ app.get("/api/products", requireSecret, (_req, res) => {
   res.json(list);
 });
 
+/**
+ * GET /api/products/:id/agents - List agents scoped to a single product's pluginDir.
+ * Reads <pluginDir>/agents/*.md (excluding _deprecated). Model info comes from
+ * the platform routing map so tier/colour logic in the UI stays consistent.
+ */
+app.get("/api/products/:id/agents", requireSecret, (req, res) => {
+  const { id } = req.params;
+  const product = products.get(id);
+  if (!product) return res.status(404).json({ ok: false, error: `Product '${id}' not found` });
+
+  const pluginDir = resolvePluginDir(product);
+  const agentsDir = path.join(pluginDir, 'agents');
+  const routing = config.routing || {};
+  const agentToModel = routing.agentToModel || {};
+  const agentToProvider = routing.agentToProvider || {};
+  const teamLeads = (config.teams?.enabled && config.teams.teamLeads) || {};
+
+  let files = [];
+  try {
+    files = fs.readdirSync(agentsDir, { withFileTypes: true })
+      .filter(d => d.isFile() && d.name.endsWith('.md'))
+      .map(d => d.name.replace(/\.md$/, ''));
+  } catch (e) {
+    return res.json({ ok: true, product: id, agents: [] });
+  }
+
+  const agents = files.map(name => {
+    const leadConfig = teamLeads[name];
+    return {
+      name,
+      model: agentToModel[name] || "sonnet",
+      provider: agentToProvider[name] || "claude",
+      isTeamLead: !!leadConfig,
+      teammates: leadConfig?.teammates || [],
+    };
+  });
+
+  res.json({ ok: true, product: id, agents });
+});
+
 app.post("/api/products/:id/reload", requireSecret, (req, res) => {
   const { id } = req.params;
   const configPath = path.join(productsDir, id, "product.json");
@@ -11790,6 +13959,8 @@ app.post("/api/products/:id/reload", requireSecret, (req, res) => {
     res.status(500).json({ error: `Failed to reload product '${id}': ${e.message}` });
   }
 });
+
+registerBigBrotherRoutes(app, { requireSecret, secret: SECRET });
 
 /**
  * CONTEXT BUDGET: show what skills each agent would load (optimized vs full)
@@ -12023,10 +14194,12 @@ app.post("/api/skill-usage", requireSecret, (req, res) => {
 /**
  * STALE CONVERSATION CLEANUP (Phase 4.4)
  */
-function cleanupStaleConversations() {
+async function cleanupStaleConversations() {
   const maxAgeMs = CONV_STALE_DAYS * 24 * 60 * 60 * 1000;
-  let cleaned = 0;
+  let cleanedFiles = 0;
+  let cleanedDb = 0;
 
+  // 1. Remove any remaining legacy files still in CONV_DIR
   try {
     const files = fs.readdirSync(CONV_DIR).filter(f => f.endsWith(".json"));
     for (const file of files) {
@@ -12035,27 +14208,37 @@ function cleanupStaleConversations() {
         const stat = fs.statSync(filePath);
         if (Date.now() - stat.mtimeMs > maxAgeMs) {
           fs.unlinkSync(filePath);
-          cleaned++;
+          cleanedFiles++;
         }
       } catch {}
     }
-    if (cleaned > 0) {
-      console.log(`[${nowIso()}] Cleaned up ${cleaned} stale conversations`);
-    }
   } catch (e) {
-    console.error(`[${nowIso()}] Conversation cleanup error: ${e.message}`);
+    console.error(`[${nowIso()}] Conversation file cleanup error: ${e.message}`);
+  }
+
+  // 2. Prune stale rows from PostgreSQL
+  try {
+    const cutoff = new Date(Date.now() - maxAgeMs);
+    cleanedDb = await db.conversations.pruneStale(cutoff);
+  } catch (e) {
+    console.error(`[${nowIso()}] Conversation DB cleanup error: ${e.message}`);
+  }
+
+  const total = cleanedFiles + cleanedDb;
+  if (total > 0) {
+    console.log(`[${nowIso()}] Cleaned up ${total} stale conversations (${cleanedFiles} files, ${cleanedDb} DB rows)`);
   }
 }
 
 // Run cleanup daily (conversations + logs + state pruning)
 setInterval(() => {
-  cleanupStaleConversations();
+  cleanupStaleConversations().catch(e => console.error(`[cleanup] cleanupStaleConversations: ${e.message}`));
   cleanupStaleLogs();
   pruneCompletedJobs();
 }, 24 * 60 * 60 * 1000);
 // Also run on startup after a delay
 setTimeout(() => {
-  cleanupStaleConversations();
+  cleanupStaleConversations().catch(e => console.error(`[cleanup] cleanupStaleConversations: ${e.message}`));
   cleanupStaleLogs();
   pruneCompletedJobs();
 }, 60000);
@@ -12819,26 +15002,15 @@ app.get("/api/batches", requireSecret, async (req, res) => {
 });
 
 // GET /api/conversations - List all conversations
-app.get("/api/conversations", requireSecret, (req, res) => {
+app.get("/api/conversations", requireSecret, async (req, res) => {
   try {
-    const files = fs.readdirSync(CONV_DIR).filter(f => f.endsWith(".json"));
-    const conversations = files.map(f => {
-      try {
-        const data = JSON.parse(fs.readFileSync(path.join(CONV_DIR, f), "utf8"));
-        return {
-          conversationId: data.conversationId,
-          updatedAt: data.updatedAt,
-          messageCount: data.messages?.length || 0,
-          filename: f,
-        };
-      } catch {
-        return null;
-      }
-    }).filter(Boolean);
-
-    // Sort by updatedAt descending
-    conversations.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
-
+    const rows = await db.conversations.listAll();
+    const conversations = rows.map(r => ({
+      conversationId: r.channelId,
+      updatedAt: r.lastActive,
+      messageCount: r.messageCount,
+      productId: r.productId,
+    }));
     return res.json({ ok: true, conversations });
   } catch (e) {
     return res.json({ ok: true, conversations: [] });
@@ -12846,8 +15018,8 @@ app.get("/api/conversations", requireSecret, (req, res) => {
 });
 
 // GET /api/conversations/:id - Get conversation messages
-app.get("/api/conversations/:id", requireSecret, (req, res) => {
-  const conv = loadConversation(req.params.id);
+app.get("/api/conversations/:id", requireSecret, async (req, res) => {
+  const conv = await loadConversation(req.params.id);
   return res.json({ ok: true, conversation: conv });
 });
 
@@ -13098,18 +15270,13 @@ app.post("/api/chat/send", requireSecret, async (req, res) => {
 // GET /api/chat/conversations - List all conversations (alias for existing endpoint)
 app.get("/api/chat/conversations", requireSecret, async (_req, res) => {
   try {
-    const convDir = config.convDir || path.join(config.logDir, "conversations");
-    if (!fs.existsSync(convDir)) return res.json({ ok: true, conversations: [] });
-    const files = fs.readdirSync(convDir).filter((f) => f.endsWith(".json"));
-    const conversations = files.map((f) => {
-      const id = f.replace(".json", "");
-      try {
-        const data = JSON.parse(fs.readFileSync(path.join(convDir, f), "utf8"));
-        return { id, channelId: id, messageCount: (data.messages || []).length, lastUpdated: data.lastUpdated || "" };
-      } catch (_) {
-        return { id, channelId: id, messageCount: 0, lastUpdated: "" };
-      }
-    });
+    const rows = await db.conversations.listAll();
+    const conversations = rows.map(r => ({
+      id: r.channelId,
+      channelId: r.channelId,
+      messageCount: r.messageCount,
+      lastUpdated: r.lastActive,
+    }));
     return res.json({ ok: true, conversations });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
@@ -13117,17 +15284,19 @@ app.get("/api/chat/conversations", requireSecret, async (_req, res) => {
 });
 
 // GET /api/chat/conversations/:id - Get conversation history
-app.get("/api/chat/conversations/:id", requireSecret, (req, res) => {
-  const conv = loadConversation(req.params.id);
+app.get("/api/chat/conversations/:id", requireSecret, async (req, res) => {
+  const conv = await loadConversation(req.params.id);
   return res.json({ ok: true, conversation: conv });
 });
 
 // DELETE /api/chat/conversations/:id - Delete conversation
-app.delete("/api/chat/conversations/:id", requireSecret, (req, res) => {
-  const convDir = config.convDir || path.join(config.logDir, "conversations");
-  const filePath = path.join(convDir, `${req.params.id}.json`);
+app.delete("/api/chat/conversations/:id", requireSecret, async (req, res) => {
   try {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    // Delete from DB
+    await db.conversations.delete(req.params.id);
+    // Also remove any residual legacy file
+    const filePath = convPath(req.params.id);
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (_) { /* best-effort */ }
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
@@ -13222,17 +15391,18 @@ app.post("/pipeline", requireSecret, async (req, res) => {
   }
 });
 
-// POST /pipelines/:id/cancel - Cancel a running pipeline
+// POST /pipelines/:id/cancel - Cancel a running or blocked pipeline
 app.post("/pipelines/:id/cancel", requireSecret, async (req, res) => {
   const pipeline = await getPipeline(req.params.id);
   if (!pipeline) return res.status(404).json({ ok: false, error: "pipeline not found" });
-  if (pipeline.status !== "running") return res.status(400).json({ ok: false, error: `Pipeline is ${pipeline.status}, not running` });
+  const cancellable = ["running", "blocked"];
+  if (!cancellable.includes(pipeline.status)) return res.status(400).json({ ok: false, error: `Pipeline is ${pipeline.status}, not ${cancellable.join("/")}` });
   pipeline.status = "failed";
   pipeline.error = req.body?.reason || "Cancelled by admin";
   const phase = pipeline.phases[pipeline.currentPhase];
-  if (phase && phase.status === "running") phase.status = "failed";
+  if (phase && (phase.status === "running" || phase.status === "blocked" || phase.status === "pending")) phase.status = "failed";
   db.pipelines.set(pipeline).catch(e => console.error('[db] pipeline update failed: ' + e.message));
-  log(`Pipeline ${pipeline.pipelineId} cancelled by admin`);
+  console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} cancelled by admin`);
   res.json({ ok: true, pipelineId: pipeline.pipelineId, status: "failed" });
 });
 
@@ -13489,7 +15659,7 @@ app.get("/api/worktrees", requireSecret, (req, res) => {
   res.json({ ok: true, worktrees: results, total: results.length });
 });
 
-// POST /api/worktrees/:id/merge - Merge worktree branch into main
+// POST /api/worktrees/:id/merge - Merge worktree branch into the integration branch (dev)
 app.post("/api/worktrees/:id/merge", requireSecret, async (req, res) => {
   const wt = await getWorktree(req.params.id);
   if (!wt) return res.status(404).json({ ok: false, error: "worktree not found" });
@@ -13513,24 +15683,15 @@ app.delete("/api/worktrees/:id", requireSecret, async (req, res) => {
   }
 });
 
-// POST /api/worktrees/:id/pr - Create a GitHub PR from worktree branch
+// POST /api/worktrees/:id/pr - Legacy alias for /merge (kept for dashboard back-compat).
+// The runner no longer opens GitHub PRs; it merges the branch into the integration
+// branch (dev) directly. Humans open PRs from dev -> main manually for deployment.
 app.post("/api/worktrees/:id/pr", requireSecret, async (req, res) => {
   const wt = await getWorktree(req.params.id);
   if (!wt) return res.status(404).json({ ok: false, error: "worktree not found" });
   try {
-    const { execSync } = require("child_process");
-    // Push branch
-    execSync(`git push -u origin ${wt.branch}`, { cwd: wt.path, encoding: "utf8", timeout: 30000 });
-    // Create PR
-    const prUrl = execSync(
-      `gh pr create --title "${wt.issueKey}: Implementation" --body "Pipeline: ${wt.pipelineId || 'N/A'}" --head ${wt.branch} --base main`,
-      { cwd: wt.path, encoding: "utf8", timeout: 30000 }
-    ).trim();
-    wt.prUrl = prUrl;
-    wt.status = "pr-created";
-    db.worktrees.set(wt).catch(e => console.error('[db] worktree update failed: ' + e.message));
-  
-    res.json({ ok: true, prUrl });
+    const result = mergeWorktree(wt.issueKey);
+    res.json({ ok: true, merged: true, ...result, note: "PR endpoint is deprecated; merged into integration branch instead" });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -13551,6 +15712,14 @@ setInterval(() => {
     console.error(`[${nowIso()}] Scheduler tick error: ${e.message}`);
   }
 }, 60000);
+
+// Worktree reconciler: every 5 minutes, reap worktrees whose remote branch has been
+// auto-merged-and-deleted by GitHub (signal that the PR was merged).
+setInterval(() => {
+  try { reconcileMergedWorktrees(); } catch (e) {
+    console.error(`[${nowIso()}] Worktree reconciler error: ${e.message}`);
+  }
+}, 300000);
 
 // Run scheduler once on startup (for items that became due during downtime)
 setTimeout(() => {
@@ -13574,6 +15743,23 @@ if (config.sprintRunner?.enabled) {
     }
   }, 30000);
   console.log(`Sprint runner enabled: scanning every ${config.sprintRunner.intervalMinutes || 10}m`);
+}
+
+// Agent Label Reconciler: catch agent:* labels that the sprint runner missed
+// (in-flight issues, webhook drops, manual labels)
+if (config.agentLabelReconciler?.enabled) {
+  const alrIntervalMs = (config.agentLabelReconciler.intervalMinutes || 15) * 60 * 1000;
+  setInterval(() => {
+    try { tickAgentLabelReconciler(); } catch (e) {
+      console.error(`[${nowIso()}] Agent label reconciler tick error: ${e.message}`);
+    }
+  }, alrIntervalMs);
+  setTimeout(() => {
+    try { tickAgentLabelReconciler(); } catch (e) {
+      console.error(`[${nowIso()}] Agent label reconciler initial tick error: ${e.message}`);
+    }
+  }, 45000);
+  console.log(`Agent label reconciler enabled: scanning every ${config.agentLabelReconciler.intervalMinutes || 15}m`);
 }
 
 // Dependency Gating: periodic checker for blocked pipelines
@@ -13619,6 +15805,7 @@ const httpServer = app.listen(PORT, HOST, () => {
   console.log(`\nFix-Loop:`);
   console.log(`  Enabled:         ${config.fixLoop.enabled}`);
   console.log(`  Max attempts:    ${config.fixLoop.maxAttempts}`);
+  console.log(`  Verify fix-loop: ${config.fixLoop.maxVerifyAttempts || 3} (QA→impl→QA cycles)`);
   console.log(`  Gate types:      ${config.fixLoop.gateTypes.join(", ")}`);
   if (config.teams?.enabled) {
     const leads = Object.keys(config.teams.teamLeads || {});

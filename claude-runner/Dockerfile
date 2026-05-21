@@ -14,18 +14,26 @@ RUN ARCH=$(dpkg --print-architecture) \
        | tar xzf - -C /usr/local/bin trufflehog
 
 RUN corepack enable && corepack prepare pnpm@9.14.4 --activate \
-    && npm install -g @anthropic-ai/claude-code @qwen-code/qwen-code attio-mcp \
+    && npm install -g @anthropic-ai/claude-code@2.1.121 @qwen-code/qwen-code attio-mcp @leonardsellem/n8n-mcp-server @playwright/mcp snyk \
     && npx playwright install chromium --with-deps
+
+RUN apt-get update && apt-get install -y --no-install-recommends python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --break-system-packages mcp-server-fetch
 
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
-COPY runner.js db.js migrate-state-to-postgres.js ./
+COPY runner.js db.js issue-tracker.js migrate-state-to-postgres.js ./
 COPY config.docker.json ./config.json
 COPY qwen-settings.docker.json /tmp/qwen-settings.json
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+
+COPY runner-mcp/package.json runner-mcp/package-lock.json* ./runner-mcp/
+RUN cd runner-mcp && npm ci --omit=dev
+COPY runner-mcp/index.js ./runner-mcp/
 
 # Run as non-root (claude refuses --dangerously-skip-permissions as root)
 RUN mkdir -p /data/logs /home/node/.claude /home/node/.qwen \

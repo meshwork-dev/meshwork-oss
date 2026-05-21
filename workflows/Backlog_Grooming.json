@@ -1,0 +1,262 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -992,
+        0
+      ],
+      "id": "f33f4fad-6164-4592-8011-53abdad8c044",
+      "name": "Weekly Monday 9am"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        -768,
+        0
+      ],
+      "id": "c0cf3175-9696-4559-8435-6b2608091ed5",
+      "name": "Query Stale Backlog Items",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process stale backlog items\nconst items = $input.all();\n\nif (items.length === 0) {\n  return [{ json: { skip: true, reason: 'No stale items found' } }];\n}\n\n// Build summary of stale items\nconst staleItems = items.map(item => {\n  const issue = item.json;\n  const daysSinceUpdate = Math.floor((Date.now() - new Date(issue.fields?.updated).getTime()) / (1000 * 60 * 60 * 24));\n  return {\n    key: issue.key,\n    summary: issue.fields?.summary || 'No summary',\n    priority: issue.fields?.priority?.name || 'None',\n    daysSinceUpdate,\n    assignee: issue.fields?.assignee?.displayName || 'Unassigned'\n  };\n});\n\n// Build Google Chat message\nconst header = `*Backlog Grooming Alert*\\nFound ${staleItems.length} items that haven't been updated in 30+ days:\\n`;\nconst itemLines = staleItems.slice(0, 15).map(item => \n  `- ${item.key} (https://certpilot.atlassian.net/browse/${item.key}): ${item.summary.slice(0, 50)}${item.summary.length > 50 ? '...' : ''} (${item.daysSinceUpdate}d stale)`\n).join('\\n');\n\nconst footer = staleItems.length > 15 ? `\\n\\n_...and ${staleItems.length - 15} more items_` : '';\n\nreturn [{\n  json: {\n    skip: false,\n    staleCount: staleItems.length,\n    message: header + itemLines + footer,\n    staleItems: staleItems.slice(0, 10) // For potential dispatch\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        0
+      ],
+      "id": "8ed41641-fa09-4d66-9b6f-48d9002b720c",
+      "name": "Build Stale Summary"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "has-stale",
+              "leftValue": "={{ !$json.skip }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -336,
+        0
+      ],
+      "id": "e7d272da-c6f0-4d3a-9acd-d12358f816f1",
+      "name": "Has Stale Items?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ENGINEERING }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -112,
+        -96
+      ],
+      "id": "705dc982-1f07-43df-a596-3082edd65377",
+      "name": "Post to Engineering Space",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Optional: Dispatch product-manager to prioritize oldest stale items\nconst staleItems = $json.staleItems || [];\n\n// Only dispatch for items stale > 60 days\nconst veryStale = staleItems.filter(item => item.daysSinceUpdate > 60);\n\nif (veryStale.length === 0) {\n  return [{ json: { skip: true } }];\n}\n\n// Return items to dispatch for review\nreturn veryStale.slice(0, 3).map(item => ({\n  json: {\n    skip: false,\n    issueKey: item.key,\n    reason: `Item stale for ${item.daysSinceUpdate} days - needs prioritization review`\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        96
+      ],
+      "id": "2d603df7-a413-47b4-9f86-124aca9aafe6",
+      "name": "Identify Items for Review"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "should-dispatch",
+              "leftValue": "={{ !$json.skip }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        112,
+        96
+      ],
+      "id": "5df37a0d-8363-4b25-b752-5635d1c37d5c",
+      "name": "Should Dispatch Review?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"product-manager\",\n  \"issueKey\": \"{{ $json.issueKey }}\",\n  \"description\": \"Automated backlog grooming: {{ $json.reason }}. Please review and either prioritize, close, or update this item.\",\n  \"workingDir\": \"{{DEFAULT_WORKING_DIR}}\",\n  \"callbackUrl\": \"{{N8N_PUBLIC_URL}}/webhook/runner/callback\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        336,
+        0
+      ],
+      "id": "ffac2056-e200-4419-b24c-ca0da5139f7e",
+      "name": "Dispatch PM Review",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Monday 9am": {
+      "main": [
+        [
+          {
+            "node": "Query Stale Backlog Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Stale Backlog Items": {
+      "main": [
+        [
+          {
+            "node": "Build Stale Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Stale Summary": {
+      "main": [
+        [
+          {
+            "node": "Has Stale Items?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Stale Items?": {
+      "main": [
+        [
+          {
+            "node": "Post to Engineering Space",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Identify Items for Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identify Items for Review": {
+      "main": [
+        [
+          {
+            "node": "Should Dispatch Review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Dispatch Review?": {
+      "main": [
+        [
+          {
+            "node": "Dispatch PM Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

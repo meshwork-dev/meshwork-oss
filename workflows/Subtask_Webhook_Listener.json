@@ -1,0 +1,404 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jira-subtask",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "subtask-webhook-01",
+      "name": "Subtask Webhook",
+      "webhookId": "",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize Jira subtask webhook payload\nconst body = $json.body || $json;\nconst issue = body.issue || {};\nconst fields = issue.fields || {};\n\n// Check if this is a subtask\nconst issueType = fields.issuetype?.name?.toLowerCase() || '';\nconst isSubtask = issueType === 'subtask' || issueType === 'sub-task';\n\nif (!isSubtask) {\n  return [{ json: { isSubtask: false, skip: true, reason: 'Not a subtask' } }];\n}\n\n// Extract agent label from issue labels\nconst labels = fields.labels || [];\nconst agentLabel = labels.find(l => l.startsWith('agent:'));\n\n// Skip if no agent label - this is not an automated subtask\nif (!agentLabel) {\n  return [{ json: { isSubtask: false, skip: true, reason: 'No agent label found' } }];\n}\n\n// Agent label mapping\nconst agentLabelMap = {\n  'agent:planner': 'engineer-planner',\n  'agent:implementer': 'engineer-implementer',\n  'agent:reviewer': 'engineer-reviewer',\n  'agent:pm': 'product-manager',\n  'agent:ui': 'ui-engineer',\n  'agent:marketing': 'marketing',\n  'agent:creative-assets': 'creative-assets',\n  'agent:bug-triage': 'bug-triage',\n  'agent:security': 'security-agent',\n  'agent:sprint-report': 'sprint-reporter',\n  'agent:standup': 'sprint-reporter'\n};\n\nconst agent = agentLabelMap[agentLabel] || 'engineer-implementer';\n\n// Get parent issue key\nconst parentKey = fields.parent?.key || null;\n\n// Determine if this agent produces code and should route through pipeline\n// Engineering agents get worktree sharing + auto-merge via pipeline engine\nconst pipelineAgents = {\n  'engineer-implementer': 'subtask',\n  'ui-engineer': 'subtask',\n  'security-agent': 'security-fix',\n  'e2e-builder': 'subtask'\n};\nconst pipelineType = pipelineAgents[agent] || null;\n\nreturn [{\n  json: {\n    isSubtask: true,\n    issueKey: issue.key,\n    parentKey: parentKey,\n    summary: fields.summary || '',\n    description: fields.description || '',\n    agent: agent,\n    agentLabel: agentLabel,\n    labels: labels,\n    status: fields.status?.name || 'To Do',\n    projectKey: issue.key?.split('-')[0] || 'CER',\n    webhookEvent: body.webhookEvent || 'jira:issue_updated',\n    timestamp: body.timestamp,\n    pipelineType: pipelineType,\n    usePipeline: !!pipelineType\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "id": "normalize-subtask",
+      "name": "Normalize subtask"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "is-subtask-check",
+              "leftValue": "={{ $json.isSubtask === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        400,
+        0
+      ],
+      "id": "check-is-subtask",
+      "name": "Is subtask?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if subtask should be triggered (status = To Do, or just created)\nconst status = $json.status?.toLowerCase() || '';\nconst webhookEvent = $json.webhookEvent || '';\n\n// Trigger conditions:\n// 1. Subtask just created and status is 'To Do'\n// 2. Subtask transitioned to 'To Do' (for retries)\n// 3. Issue has no blocking links (checked separately)\n\nconst shouldTrigger = \n  status === 'to do' || \n  status === 'open' || \n  webhookEvent.includes('created');\n\nreturn [{\n  json: {\n    ...$json,\n    shouldTrigger: shouldTrigger,\n    triggerReason: shouldTrigger ? \n      (webhookEvent.includes('created') ? 'subtask_created' : 'subtask_ready') : \n      'not_ready'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        -96
+      ],
+      "id": "check-trigger-condition",
+      "name": "Check trigger condition"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "should-trigger-check",
+              "leftValue": "={{ $json.shouldTrigger }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        -96
+      ],
+      "id": "check-should-trigger",
+      "name": "Should trigger?"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://{{JIRA_HOST}}/rest/api/3/issue/' + $json.issueKey + '?fields=issuelinks' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1000,
+        -192
+      ],
+      "id": "get-issue-links",
+      "name": "Get issue links",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if this subtask has unresolved blockers\nconst issueLinks = $json.fields?.issuelinks || [];\nconst originalData = $('Check trigger condition').first().json;\n\n// Find \"is blocked by\" links\nconst blockers = issueLinks.filter(link => {\n  // Jira uses different link types - check for blocked-by relationship\n  const linkType = link.type?.name?.toLowerCase() || '';\n  const isBlockedBy = linkType.includes('block');\n  \n  // The inwardIssue is the blocker (if this issue is blocked BY it)\n  const blockerIssue = link.inwardIssue;\n  if (!blockerIssue) return false;\n  \n  // Check if blocker is resolved/done\n  const blockerStatus = blockerIssue.fields?.status?.name?.toLowerCase() || '';\n  const isResolved = blockerStatus === 'done' || blockerStatus === 'closed' || blockerStatus === 'resolved';\n  \n  return isBlockedBy && !isResolved;\n});\n\nconst hasUnresolvedBlockers = blockers.length > 0;\nconst blockerKeys = blockers.map(b => b.inwardIssue?.key).filter(Boolean);\n\nreturn [{\n  json: {\n    ...originalData,\n    hasBlockers: hasUnresolvedBlockers,\n    blockerKeys: blockerKeys,\n    canRun: !hasUnresolvedBlockers\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        -192
+      ],
+      "id": "check-blockers",
+      "name": "Check for blockers"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "can-run-check",
+              "leftValue": "={{ $json.canRun }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1400,
+        -192
+      ],
+      "id": "check-can-run",
+      "name": "No blockers?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "use-pipeline-check",
+              "leftValue": "={{ $json.usePipeline }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1600,
+        -288
+      ],
+      "id": "check-use-pipeline",
+      "name": "Use pipeline?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/pipeline",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"issueKey\": \"{{ $json.issueKey }}\",\n  \"pipelineType\": \"{{ $json.pipelineType }}\",\n  \"parentKey\": {{ JSON.stringify($json.parentKey) }},\n  \"projectKey\": \"{{ $json.projectKey }}\",\n  \"labels\": [\"{{ $json.agentLabel }}\"],\n  \"callbackUrl\": \"{{N8N_PUBLIC_URL}}/webhook/runner/callback\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1800,
+        -384
+      ],
+      "id": "trigger-pipeline",
+      "name": "Trigger pipeline",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"{{ $json.agent }}\",\n  \"issueKey\": \"{{ $json.issueKey }}\",\n  \"summary\": {{ JSON.stringify($json.summary) }},\n  \"description\": {{ JSON.stringify($json.description || '') }},\n  \"projectKey\": \"{{ $json.projectKey }}\",\n  \"callbackUrl\": \"{{N8N_PUBLIC_URL}}/webhook/runner/callback\",\n  \"parentKey\": {{ JSON.stringify($json.parentKey) }},\n  \"subtaskDepth\": 1\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1800,
+        -192
+      ],
+      "id": "trigger-runner-job",
+      "name": "Trigger runner job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log that subtask is blocked - will be triggered later when blockers complete\nconst blockerKeys = $json.blockerKeys || [];\n\nconsole.log(`Subtask ${$json.issueKey} blocked by: ${blockerKeys.join(', ')}`);\n\nreturn [{\n  json: {\n    status: 'blocked',\n    issueKey: $json.issueKey,\n    blockedBy: blockerKeys,\n    message: `Waiting for blockers to complete: ${blockerKeys.join(', ')}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        -96
+      ],
+      "id": "log-blocked",
+      "name": "Log blocked status"
+    }
+  ],
+  "connections": {
+    "Subtask Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize subtask",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize subtask": {
+      "main": [
+        [
+          {
+            "node": "Is subtask?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is subtask?": {
+      "main": [
+        [
+          {
+            "node": "Check trigger condition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check trigger condition": {
+      "main": [
+        [
+          {
+            "node": "Should trigger?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should trigger?": {
+      "main": [
+        [
+          {
+            "node": "Get issue links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get issue links": {
+      "main": [
+        [
+          {
+            "node": "Check for blockers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for blockers": {
+      "main": [
+        [
+          {
+            "node": "No blockers?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No blockers?": {
+      "main": [
+        [
+          {
+            "node": "Use pipeline?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log blocked status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use pipeline?": {
+      "main": [
+        [
+          {
+            "node": "Trigger pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Trigger runner job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

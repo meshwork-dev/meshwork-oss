@@ -1,0 +1,491 @@
+{
+  "name": "Sprint Manager - Daily Lifecycle",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "id": "sprint-001",
+      "name": "Daily 09:00"
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst yyyy = now.getFullYear();\nconst mm = String(now.getMonth() + 1).padStart(2, '0');\nconst dd = String(now.getDate()).padStart(2, '0');\nconst sprintName = `Sprint ${yyyy}-${mm}-${dd}`;\nconst startDate = new Date(yyyy, now.getMonth(), now.getDate(), 9, 0, 0);\nconst endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000);\n\nreturn [{\n  json: {\n    sprintName,\n    startDate: startDate.toISOString(),\n    endDate: endDate.toISOString(),\n    boardId: 34\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "id": "sprint-002",
+      "name": "Sprint Config"
+    },
+    {
+      "parameters": {
+        "url": "https://{{JIRA_HOST}}/rest/agile/1.0/board/34/sprint",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "state",
+              "value": "active"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "id": "sprint-003",
+      "name": "Get Active Sprint",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst values = data.values || [];\nconst hasActive = values.length > 0;\nconst activeSprintId = hasActive ? values[0].id : null;\nconst activeSprintName = hasActive ? values[0].name : null;\nconst config = $('Sprint Config').first().json;\n\nreturn [{\n  json: {\n    hasActive,\n    activeSprintId,\n    activeSprintName,\n    ...config\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "id": "sprint-004",
+      "name": "Process Active"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "has-active",
+              "leftValue": "={{ $json.hasActive }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        300
+      ],
+      "id": "sprint-005",
+      "name": "Close Sprint?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{JIRA_HOST}}/rest/agile/1.0/sprint/{{ $json.activeSprintId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{ \"state\": \"closed\" }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        180
+      ],
+      "id": "sprint-006",
+      "name": "Close Sprint",
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://{{JIRA_HOST}}/rest/agile/1.0/sprint",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $('Sprint Config').first().json.sprintName, originBoardId: 34 }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        300
+      ],
+      "id": "sprint-007",
+      "name": "Create Sprint",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://{{JIRA_HOST}}/rest/api/3/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"jql\": \"project = CER AND status IN ('To Do', 'In Progress') AND issuetype IN (Story, Task, Bug) ORDER BY status DESC, priority DESC\",\n  \"fields\": [\"summary\", \"status\", \"priority\", \"labels\"],\n  \"maxResults\": 50\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        300
+      ],
+      "id": "sprint-008",
+      "name": "Search Issues",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const searchResult = $input.first().json;\nconst issues = searchResult.issues || [];\n\n// Always include In Progress (carry-over), cap To Do at 20\nconst inProgress = issues.filter(i => i.fields?.status?.name === 'In Progress');\nconst toDo = issues.filter(i => i.fields?.status?.name === 'To Do').slice(0, 20);\nconst selected = [...inProgress, ...toDo];\n\nconst sprintId = $('Create Sprint').first().json.id;\nconst config = $('Sprint Config').first().json;\nconst issueKeys = selected.map(i => i.key);\n\nreturn [{\n  json: {\n    sprintId,\n    issueKeys,\n    issueCount: issueKeys.length,\n    carryOver: inProgress.length,\n    newWork: toDo.length,\n    hasIssues: issueKeys.length > 0,\n    issues: selected.map(i => ({\n      key: i.key,\n      summary: i.fields?.summary || '',\n      status: i.fields?.status?.name || 'Unknown',\n      priority: i.fields?.priority?.name || 'Medium'\n    })),\n    ...config\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ],
+      "id": "sprint-009",
+      "name": "Filter Issues"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "has-issues",
+              "leftValue": "={{ $json.hasIssues }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1980,
+        300
+      ],
+      "id": "sprint-010",
+      "name": "Has Issues?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{JIRA_HOST}}/rest/agile/1.0/sprint/{{ $json.sprintId }}/issue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ issues: $json.issueKeys }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        180
+      ],
+      "id": "sprint-011",
+      "name": "Move to Sprint",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{JIRA_HOST}}/rest/agile/1.0/sprint/{{ $('Create Sprint').first().json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ state: 'active', startDate: $('Sprint Config').first().json.startDate, endDate: $('Sprint Config').first().json.endDate }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        300
+      ],
+      "id": "sprint-012",
+      "name": "Start Sprint",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Sprint Config').first().json;\nconst filterData = $('Filter Issues').first().json;\nconst activeData = $('Process Active').first().json;\n\nlet msg = `🏃 *Sprint Manager*\\n\\n`;\n\nif (activeData.hasActive) {\n  msg += `📕 Closed: ${activeData.activeSprintName}\\n`;\n}\nmsg += `📗 Started: *${config.sprintName}*\\n`;\nmsg += `📋 Issues: ${filterData.issueCount} (${filterData.carryOver} carry-over, ${filterData.newWork} new)\\n\\n`;\n\nif (filterData.issueCount > 0) {\n  if (filterData.carryOver > 0) {\n    msg += `*🔄 Carry-Over (In Progress):*\\n`;\n    filterData.issues.filter(i => i.status === 'In Progress').forEach(i => {\n      msg += `• [${i.key}](https://{{JIRA_HOST}}/browse/${i.key}) ${i.summary}\\n`;\n    });\n    msg += `\\n`;\n  }\n  if (filterData.newWork > 0) {\n    msg += `*📥 New Work (To Do):*\\n`;\n    filterData.issues.filter(i => i.status === 'To Do').forEach(i => {\n      msg += `• [${i.key}](https://{{JIRA_HOST}}/browse/${i.key}) ${i.summary}\\n`;\n    });\n  }\n} else {\n  msg += `_No issues to work on. Backlog is empty._`;\n}\n\nreturn [{ json: { message: msg } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        300
+      ],
+      "id": "sprint-013",
+      "name": "Build Summary"
+    },
+    {
+      "parameters": {
+        "chatId": "-5037701631",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2860,
+        300
+      ],
+      "id": "sprint-014",
+      "name": "Send to Engineering",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 09:00": {
+      "main": [
+        [
+          {
+            "node": "Sprint Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sprint Config": {
+      "main": [
+        [
+          {
+            "node": "Get Active Sprint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Sprint": {
+      "main": [
+        [
+          {
+            "node": "Process Active",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Active": {
+      "main": [
+        [
+          {
+            "node": "Close Sprint?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close Sprint?": {
+      "main": [
+        [
+          {
+            "node": "Close Sprint",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Sprint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close Sprint": {
+      "main": [
+        [
+          {
+            "node": "Create Sprint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Sprint": {
+      "main": [
+        [
+          {
+            "node": "Search Issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Issues": {
+      "main": [
+        [
+          {
+            "node": "Filter Issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Issues": {
+      "main": [
+        [
+          {
+            "node": "Has Issues?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Issues?": {
+      "main": [
+        [
+          {
+            "node": "Move to Sprint",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Start Sprint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move to Sprint": {
+      "main": [
+        [
+          {
+            "node": "Start Sprint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Sprint": {
+      "main": [
+        [
+          {
+            "node": "Build Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Summary": {
+      "main": [
+        [
+          {
+            "node": "Send to Engineering",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

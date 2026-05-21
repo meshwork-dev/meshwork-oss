@@ -1,0 +1,132 @@
+{
+  "name": "Security Review Schedule",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 19 * * 0"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "sec-review-001",
+      "name": "Weekly Sunday 7pm"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate deep security review request\nconst reviewId = `security-review-${Date.now()}`;\nconst dateKey = new Date().toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    reviewId,\n    timestamp: new Date().toISOString(),\n    idempotencyKey: `security-review:weekly:${dateKey}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "sec-review-002",
+      "name": "Prepare Review Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/agent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"security-agent\",\n  \"prompt\": \"Perform a comprehensive weekly security review of the codebase. Run dependency audit (pnpm audit), secrets detection (gitleaks, trufflehog), SAST analysis for OWASP Top 10, and compliance validation. Create Jira issues for any critical or high severity findings. Produce a security review report at docs/sdlc/security/SECURITY-REVIEW-{{ $json.timestamp.split('T')[0] }}.md\",\n  \"workingDir\": \"{{DEFAULT_WORKING_DIR}}\",\n  \"model\": \"sonnet\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "sec-review-003",
+      "name": "Dispatch Security Review",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ENGINEERING }}",
+        "text": "*Weekly Deep Security Review Started*\n\nReview ID: {{ $('Prepare Review Request').item.json.reviewId }}\nAgent: security-agent (SAST + Secrets + Compliance)\n\nThis runs before the basic security scan at 8pm.\nResults will be posted when complete.",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "sec-review-004",
+      "name": "Notify Engineering Space",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Sunday 7pm": {
+      "main": [
+        [
+          {
+            "node": "Prepare Review Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Review Request": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Security Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Security Review": {
+      "main": [
+        [
+          {
+            "node": "Notify Engineering Space",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

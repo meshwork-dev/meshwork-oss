@@ -1,0 +1,272 @@
+{
+  "name": "Jira Webhook Listener",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jira-in-progress",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -16,
+        272
+      ],
+      "id": "0b2ab985-c38e-473f-a63c-137f3b995ffb",
+      "name": "Webhook",
+      "webhookId": "",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const issueId = $json.body?.issue?.id;\nconst statusId = $json.body?.issue?.fields?.status?.id;\nconst ts = $json.body?.timestamp;\n\nconst key = (issueId && statusId && ts)\n  ? `jira:auto:${issueId}:${statusId}:${ts}`\n  : `fallback:${$json.headers?.[\"x-b3-traceid\"] || \"no-trace\"}:${$json.headers?.[\"x-b3-spanid\"] || \"no-span\"}`;\n\nconst data = $getWorkflowStaticData('global');\ndata.seen = data.seen || {};\n\nconst now = Date.now();\nconst maxAgeMs = 7 * 24 * 60 * 60 * 1000;\nfor (const [k, v] of Object.entries(data.seen)) {\n  if ((v || 0) < now - maxAgeMs) delete data.seen[k];\n}\n\nif (data.seen[key]) {\n  return [{ json: { ...$json, idempotency: { ok: false, duplicate: true, key } } }];\n}\n\ndata.seen[key] = now;\nreturn [{ json: { ...$json, idempotency: { ok: true, duplicate: false, key } } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        272
+      ],
+      "id": "59f5fbe5-ed0c-434c-9298-8a0cb46ab97c",
+      "name": "Idempotency Check"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7c938c77-1266-497a-b0f3-31b6d535a70d",
+              "leftValue": "={{$json.idempotency.ok}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        304,
+        272
+      ],
+      "id": "20de60e1-33fb-43b1-b293-d28727c30016",
+      "name": "Duplicate?"
+    },
+    {
+      "parameters": {
+        "errorMessage": "Workflow already executed for this notification"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        464,
+        448
+      ],
+      "id": "c1a1cb4a-a49b-4584-a1be-ef6465f617aa",
+      "name": "Stop and Error1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Project key → working directory map (add new products here)\nconst PROJECT_DIRS = {\n  CER: \"{{DEFAULT_WORKING_DIR}}\",\n  EOS: \"{{DEFAULT_WORKING_DIR}}\",\n  WMS: \"{{DEFAULT_WORKING_DIR}}\"\n};\nconst DEFAULT_DIR = \"{{DEFAULT_WORKING_DIR}}\";\n\nconst projectKey = $json.body?.issue?.fields?.project?.key || \"\";\nconst workingDir = PROJECT_DIRS[projectKey] || DEFAULT_DIR;\n\nconst eventType = String($json.headers?.[\"x-event-type\"] || \"\")\n  .trim()\n  .toLowerCase();\n\nconst summary = $json.body?.issue?.fields?.summary || \"\";\nconst issueType = $json.body?.issue?.fields?.issuetype?.name || \"\";\nconst labels = ($json.body?.issue?.fields?.labels || []).map(l => typeof l === 'string' ? l : l.name || '');\n\n// Agent Teams handles implement and code-review inline (planner spawns teammates)\nconst AGENT_TEAMS_HANDLED = [\"implement\", \"code-review\"];\nif (AGENT_TEAMS_HANDLED.includes(eventType)) {\n  throw new Error(`Event \"${eventType}\" is handled by Agent Teams \\u2014 skipping duplicate dispatch. Disable Jira automation rules 1002/1003 to stop these events.`);\n}\n\nconst isMarketingTask = summary.startsWith(\"[Marketing]\");\nconst isBugTask = issueType.toLowerCase() === \"bug\";\nconst isSecurityFix = labels.includes('security-fix') || labels.includes('security-vulnerability');\nconst needsPipeline = labels.includes('needs-requirements') || labels.includes('needs-ux-design');\n// Agent-created bugs already have a root-cause note — skip triage and go straight to bug-fix pipeline\nconst isAgentCreatedBug = labels.includes('agent-created-bug') || labels.includes('agent:engineer-planner');\n\nlet agent;\nlet usePipeline = false;\nlet pipelineType = null;\n\nif (eventType) {\n  agent =\n    eventType === \"plan\" ? \"engineer-planner\"\n    : eventType === \"acceptance-review\" ? \"product-manager\"\n    : eventType === \"bug-triage\" ? \"bug-triage\"\n    : eventType === \"bug-created\" ? \"bug-triage\"\n    : eventType === \"marketing\" ? \"marketing\"\n    : null;\n} else {\n  if (isMarketingTask) {\n    agent = \"marketing\";\n  } else if (isBugTask) {\n    if (isSecurityFix) {\n      usePipeline = true;\n      pipelineType = \"security-fix\";\n    } else if (isAgentCreatedBug) {\n      // Agent-created bugs already have root-cause analysis — bypass triage and go directly to bug-fix pipeline\n      usePipeline = true;\n      pipelineType = \"bug-fix\";\n    } else {\n      agent = \"bug-triage\";\n    }\n  } else {\n    // Default: all Stories/Tasks go through new-feature pipeline (no label required)\n    usePipeline = true;\n    pipelineType = \"new-feature\";\n  }\n}\n\nif (!usePipeline && !agent) throw new Error(`Cannot determine agent for event: ${eventType}`);\n\nif (usePipeline) {\n  return [{\n    json: {\n      usePipeline: true,\n      pipeline: {\n        issueKey: $json.body.issue.key,\n        pipelineType,\n        labels,\n        workingDir\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    usePipeline: false,\n    job: {\n      agent,\n      issueKey: $json.body.issue.key,\n      summary,\n      description: $json.body.issue.fields.description,\n      projectKey,\n      issueType,\n      triggeredAt: $json.body.timestamp,\n      workingDir,\n      isMarketingTask\n    }\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        272
+      ],
+      "id": "9526dea3-5c7a-469d-bd40-0104ea606d67",
+      "name": "Route by Type"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "pipeline-check-001",
+              "leftValue": "={{$json.usePipeline}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        720,
+        272
+      ],
+      "id": "pipeline-route-001",
+      "name": "Pipeline?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/pipeline",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "=pipeline:{{ $json.pipeline.issueKey }}:{{ Date.now() }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.pipeline) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        920,
+        160
+      ],
+      "id": "pipeline-dispatch-001",
+      "name": "Dispatch Pipeline",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        920,
+        384
+      ],
+      "id": "b759ed0a-d5b1-47e5-aaaa-2ab00efe2d01",
+      "name": "Dispatch Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Idempotency Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency Check": {
+      "main": [
+        [
+          {
+            "node": "Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Route by Type",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stop and Error1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Type": {
+      "main": [
+        [
+          {
+            "node": "Pipeline?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pipeline?": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dispatch Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

@@ -1,0 +1,10 @@
+version: "2"
+# Set NGROK_AUTHTOKEN in .env, or replace this line with your authtoken.
+authtoken: ${NGROK_AUTHTOKEN}
+
+tunnels:
+  n8n:
+    proto: http
+    addr: n8n:5678
+    # Set NGROK_DOMAIN in .env (e.g. yourapp.ngrok.app)
+    hostname: ${NGROK_DOMAIN}

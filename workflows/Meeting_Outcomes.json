@@ -1,0 +1,409 @@
+{
+  "name": "Meeting Outcomes - Confluence & Jira Tasks",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meeting/outcomes",
+        "options": {
+          "responseData": "={ \"ok\": true }"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "mo-webhook",
+      "name": "Meeting Outcomes Webhook",
+      "webhookId": ""
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json;\nconst meetingId = body.meetingId || 'unknown';\nconst topic = body.topic || 'Team Meeting';\nconst agents = body.agents || [];\nconst summary = body.summary || '';\nconst transcript = body.transcript || [];\nconst createdAt = body.createdAt || new Date().toISOString();\nconst endedAt = body.endedAt || new Date().toISOString();\nconst duration = body.duration || 0;\nconst messageCount = body.messageCount || 0;\nconst telegram = body.telegram || null;\nconst confluenceSpace = body.confluenceSpace || 'CE';\nconst confluenceParentPage = body.confluenceParentPage || 'Meetings';\nconst jiraProject = body.jiraProject || 'CER';\nconst runnerUrl = body.runnerUrl || '{{RUNNER_INTERNAL_URL}}';\n\n// Format date for page title\nconst d = new Date(createdAt);\nconst dateStr = d.toISOString().split('T')[0];\nconst timeStr = d.toTimeString().split(' ')[0].substring(0, 5);\nconst shortId = meetingId.substring(0, 8);\nconst pageTitle = `Meeting - ${dateStr} ${timeStr} - [${shortId}] ${topic.substring(0, 50)}`;\n\n// Build Confluence page body (ADF-like HTML)\nlet pageBody = `<h1>Meeting Minutes</h1>`;\npageBody += `<p><strong>Date:</strong> ${d.toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} at ${timeStr}</p>`;\npageBody += `<p><strong>Topic:</strong> ${topic}</p>`;\npageBody += `<p><strong>Participants:</strong> ${agents.join(', ')}</p>`;\npageBody += `<p><strong>Duration:</strong> ${Math.round(duration / 60)} minutes | <strong>Messages:</strong> ${messageCount}</p>`;\npageBody += `<p><strong>Meeting ID:</strong> ${meetingId}</p>`;\npageBody += `<hr/>`;\n\n// Summary / Outcomes\npageBody += `<h2>Outcomes</h2>`;\nconst summaryHtml = summary\n  .replace(/## (.+)/g, '<h3>$1</h3>')\n  .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')\n  .replace(/^- \\[ \\] (.+)$/gm, '<li>$1</li>')\n  .replace(/^- (.+)$/gm, '<li>$1</li>')\n  .replace(/\\n/g, '<br/>');\npageBody += summaryHtml;\n\n// Full transcript\npageBody += `<h2>Full Transcript</h2>`;\nfor (const msg of transcript) {\n  const speaker = msg.agent || msg.name || 'unknown';\n  const content = (msg.content || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\n/g, '<br/>');\n  pageBody += `<h4>${speaker}</h4><p>${content}</p><hr/>`;\n}\n\n// Parse action items from summary\nconst actionItems = [];\nconst actionRegex = /- \\[ \\] (.+?)\\s*[\\u2014\\u2013-]\\s*Owner:\\s*(\\S+)\\s*[\\u2014\\u2013-]\\s*Priority:\\s*(High|Medium|Low)/gi;\nlet match;\nwhile ((match = actionRegex.exec(summary)) !== null) {\n  actionItems.push({\n    task: match[1].trim(),\n    owner: match[2].trim(),\n    priority: match[3].trim()\n  });\n}\n\n// Also try simpler patterns\nif (actionItems.length === 0) {\n  const simpleRegex = /- \\[ \\] (.+?)\\s*[\\u2014\\u2013-]\\s*(?:Owner:?\\s*)?(\\S+)/gi;\n  while ((match = simpleRegex.exec(summary)) !== null) {\n    actionItems.push({\n      task: match[1].trim(),\n      owner: match[2].trim(),\n      priority: 'Medium'\n    });\n  }\n}\n\n// Determine highest priority for parent story\nconst priorityOrder = { 'High': 0, 'Medium': 1, 'Low': 2 };\nlet highestPriority = 'Medium';\nfor (const item of actionItems) {\n  if ((priorityOrder[item.priority] || 1) < (priorityOrder[highestPriority] || 1)) {\n    highestPriority = item.priority;\n  }\n}\nconst priorityMap = { 'High': '2', 'Medium': '3', 'Low': '4' };\n\nreturn [{ json: {\n  meetingId,\n  topic,\n  agents,\n  summary,\n  transcript,\n  createdAt,\n  endedAt,\n  duration,\n  messageCount,\n  telegram,\n  confluenceSpace,\n  confluenceParentPage,\n  jiraProject,\n  runnerUrl,\n  pageTitle,\n  pageBody,\n  actionItems,\n  dateStr,\n  timeStr,\n  highestPriority,\n  parentPriorityId: priorityMap[highestPriority] || '3'\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "mo-parse",
+      "name": "Parse Outcomes"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{JIRA_HOST}}/wiki/rest/api/content",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "={{ $json.confluenceParentPage }}"
+            },
+            {
+              "name": "spaceKey",
+              "value": "={{ $json.confluenceSpace }}"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        -200
+      ],
+      "id": "mo-confluence-lookup",
+      "name": "Look Up Parent Page",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{JIRA_HOST}}/wiki/rest/api/content",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ type: 'page', title: $('Parse Outcomes').item.json.pageTitle, space: { key: $('Parse Outcomes').item.json.confluenceSpace }, ancestors: $json.results && $json.results.length > 0 ? [{ id: String($json.results[0].id) }] : [], body: { storage: { value: $('Parse Outcomes').item.json.pageBody, representation: 'storage' } } }) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {},
+        "method": "POST"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        -200
+      ],
+      "id": "mo-confluence",
+      "name": "Create Confluence Page",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Parse Outcomes').item.json.telegram?.chatId || '' }}",
+        "text": "={{ `*Meeting Minutes Published*\\n\\nTopic: ${$('Parse Outcomes').item.json.topic}\\n\\nConfluence: ${$('Create Confluence Page').item.json.error ? 'FAILED' : 'Page created'}\\nAction Items: ${$('Parse Outcomes').item.json.actionItems.length} (as subtasks under parent story)\\n\\n_Parent story set to In Progress._` }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        -200
+      ],
+      "id": "mo-notify",
+      "name": "Notify Telegram",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "has-actions",
+              "leftValue": "={{ $('Parse Outcomes').item.json.actionItems.length > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        440,
+        100
+      ],
+      "id": "mo-check-actions",
+      "name": "Has Action Items?"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{JIRA_HOST}}/rest/api/3/issue",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { project: { key: $('Parse Outcomes').item.json.jiraProject }, summary: `[Meeting] ${$('Parse Outcomes').item.json.topic.substring(0, 230)}`, description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: `Meeting Topic: ${$('Parse Outcomes').item.json.topic}` }] }, { type: 'paragraph', content: [{ type: 'text', text: `Participants: ${$('Parse Outcomes').item.json.agents.join(', ')}` }] }, { type: 'paragraph', content: [{ type: 'text', text: `Date: ${$('Parse Outcomes').item.json.dateStr} ${$('Parse Outcomes').item.json.timeStr} | Meeting ID: ${$('Parse Outcomes').item.json.meetingId}` }] }, { type: 'paragraph', content: [{ type: 'text', text: `Action Items: ${$('Parse Outcomes').item.json.actionItems.length}` }] }] }, issuetype: { name: 'Story' }, priority: { id: $('Parse Outcomes').item.json.parentPriorityId }, labels: ['meeting-action'] } }) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {},
+        "method": "POST"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        100
+      ],
+      "id": "mo-create-parent",
+      "name": "Create Parent Story",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split action items into individual subtasks with parent key\nconst data = $('Parse Outcomes').first().json;\nconst parentKey = $('Create Parent Story').first().json.key;\nconst actionItems = data.actionItems || [];\nconst jiraProject = data.jiraProject || 'CER';\nconst meetingId = data.meetingId;\nconst topic = data.topic;\nconst runnerUrl = data.runnerUrl;\n\nconst ownerToLabel = {\n  'product-manager': 'agent:pm',\n  'engineer-planner': 'agent:planner',\n  'engineer-implementer': 'agent:implementer',\n  'engineer-reviewer': 'agent:reviewer',\n  'architect-jets': 'agent:architect',\n  'security-agent': 'agent:security',\n  'qa-agent': 'agent:qa',\n  'ux-agent': 'agent:ux',\n  'marketing': 'agent:marketing',\n  'sales-development': 'agent:sales-dev',\n  'ui-engineer': 'agent:ui',\n  'ba-agent': 'agent:ba',\n  'ask-tom-agent': 'agent:troubleshoot',\n  'uat-agent': 'agent:uat',\n};\n\nconst priorityMap = { 'High': '2', 'Medium': '3', 'Low': '4' };\n\nconst items = actionItems.map((item, idx) => {\n  let owner = item.owner || '';\n  if (owner.includes(':')) {\n    owner = owner.split(':').pop();\n  }\n  const fullTask = item.task || '';\n  const shortTask = fullTask.length > 220 ? fullTask.substring(0, 217) + '...' : fullTask;\n  \n  return {\n    idx,\n    task: fullTask,\n    shortTask,\n    owner,\n    priority: item.priority,\n    jiraProject,\n    meetingId,\n    topic,\n    runnerUrl,\n    parentKey,\n    agentLabel: ownerToLabel[owner] || null,\n    jiraPriorityId: priorityMap[item.priority] || '3',\n    labels: ownerToLabel[owner] ? [ownerToLabel[owner], 'meeting-action'] : ['meeting-action']\n  };\n});\n\nreturn items.map(i => ({ json: i }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        200
+      ],
+      "id": "mo-split-actions",
+      "name": "Prepare Subtasks"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{JIRA_HOST}}/rest/api/3/issue",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: { project: { key: $json.jiraProject }, parent: { key: $json.parentKey }, summary: $json.shortTask, description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: `Task: ${$json.task}` }] }, { type: 'paragraph', content: [{ type: 'text', text: `Owner: ${$json.owner} | Priority: ${$json.priority}` }] }] }, issuetype: { name: 'Subtask' }, priority: { id: $json.jiraPriorityId }, labels: $json.labels } }) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {},
+        "method": "POST"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        200
+      ],
+      "id": "mo-create-subtask",
+      "name": "Create Subtask",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{JIRA_HOST}}/rest/api/3/issue/{{ $('Create Parent Story').item.json.key }}/transitions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "mo-get-transitions",
+      "name": "Get Transitions",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const transitions = $json.transitions || [];\nconst inProgress = transitions.find(t => \n  t.name.toLowerCase() === 'in progress' ||\n  t.name.toLowerCase() === 'in-progress' ||\n  t.name.toLowerCase().includes('progress')\n);\n\nif (!inProgress) {\n  // No In Progress transition available — skip\n  return [];\n}\n\nreturn [{ json: {\n  transitionId: inProgress.id,\n  issueKey: $('Create Parent Story').first().json.key\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "id": "mo-find-transition",
+      "name": "Find In Progress"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{JIRA_HOST}}/rest/api/3/issue/{{ $json.issueKey }}/transitions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ transition: { id: $json.transitionId } }) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {},
+        "method": "POST"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        0
+      ],
+      "id": "mo-transition",
+      "name": "Transition In Progress",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Meeting Outcomes Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Outcomes": {
+      "main": [
+        [
+          {
+            "node": "Look Up Parent Page",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has Action Items?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look Up Parent Page": {
+      "main": [
+        [
+          {
+            "node": "Create Confluence Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Confluence Page": {
+      "main": [
+        [
+          {
+            "node": "Notify Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Action Items?": {
+      "main": [
+        [
+          {
+            "node": "Create Parent Story",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Create Parent Story": {
+      "main": [
+        [
+          {
+            "node": "Prepare Subtasks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Transitions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Subtasks": {
+      "main": [
+        [
+          {
+            "node": "Create Subtask",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Transitions": {
+      "main": [
+        [
+          {
+            "node": "Find In Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find In Progress": {
+      "main": [
+        [
+          {
+            "node": "Transition In Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

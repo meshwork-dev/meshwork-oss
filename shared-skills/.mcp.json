@@ -1,0 +1,50 @@
+{
+  "mcpServers": {
+    "runner-admin": {
+      "command": "node",
+      "args": ["/app/runner-mcp/index.js"],
+      "env": {
+        "RUNNER_URL": "http://runner:3210",
+        "RUNNER_SECRET": "${RUNNER_SECRET}"
+      }
+    },
+    "n8n": {
+      "command": "n8n-mcp-server",
+      "env": {
+        "N8N_API_URL": "http://n8n:5678/api/v1",
+        "N8N_API_KEY": "${N8N_API_KEY}"
+      }
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"],
+      "env": {
+        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
+      }
+    },
+    "playwright": {
+      "command": "playwright-mcp"
+    },
+    "fetch": {
+      "command": "mcp-server-fetch"
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "snyk": {
+      "command": "snyk",
+      "args": ["mcp", "-t", "stdio"],
+      "env": {
+        "SNYK_TOKEN": "${SNYK_TOKEN}"
+      }
+    }
+  }
+}

@@ -1,0 +1,231 @@
+{
+  "name": "Marketing Content Aging Check",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "schedule-trigger-001",
+      "name": "Weekly Monday 9am"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://{{JIRA_HOST}}/wiki/rest/api/content/search?cql=space=MKTG AND label=content-published&limit=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        220,
+        0
+      ],
+      "id": "search-published-content",
+      "name": "Search Published Content",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $json.results || [];\nconst now = new Date();\nconst sixMonthsAgo = new Date(now.setMonth(now.getMonth() - 6));\n\nconst agingContent = [];\n\nfor (const page of results) {\n  // Check if page has a 'Review Due' date in properties or use last modified\n  const lastModified = new Date(page.history?.lastUpdated?.when || page.version?.when);\n  \n  if (lastModified < sixMonthsAgo) {\n    agingContent.push({\n      pageId: page.id,\n      title: page.title,\n      spaceKey: page.space?.key || 'MKTG',\n      lastModified: lastModified.toISOString(),\n      url: `https://{{JIRA_HOST}}/wiki${page._links?.webui || ''}`\n    });\n  }\n}\n\nreturn agingContent.map(item => ({ json: item }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "filter-aging-content",
+      "name": "Filter Aging Content"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "has-aging-content",
+              "leftValue": "={{ $json.pageId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        0
+      ],
+      "id": "check-has-content",
+      "name": "Has Aging Content?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://{{JIRA_HOST}}/wiki/rest/api/content/' + $json.pageId + '/label' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "[{\"prefix\": \"global\", \"name\": \"content-aging\"}]",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        -100
+      ],
+      "id": "add-aging-label",
+      "name": "Add Aging Label",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "project": {
+          "__rl": true,
+          "value": "10033",
+          "mode": "id"
+        },
+        "issueType": {
+          "__rl": true,
+          "value": "10007",
+          "mode": "id"
+        },
+        "summary": "={{ '[Content Review] ' + $json.title }}",
+        "additionalFields": {
+          "description": "={{ 'Marketing content needs review - older than 6 months.\\n\\n**Page:** ' + $json.title + '\\n**Last Modified:** ' + $json.lastModified + '\\n**Confluence Link:** ' + $json.url + '\\n\\n**Action Required:**\\n- Review content for accuracy\\n- Update if needed\\n- Mark as Reviewed or Retire to Archive' }}"
+        }
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -100
+      ],
+      "id": "create-review-task",
+      "name": "Create Review Task",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        880,
+        100
+      ],
+      "id": "no-aging-content",
+      "name": "No Aging Content"
+    }
+  ],
+  "connections": {
+    "Weekly Monday 9am": {
+      "main": [
+        [
+          {
+            "node": "Search Published Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Published Content": {
+      "main": [
+        [
+          {
+            "node": "Filter Aging Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Aging Content": {
+      "main": [
+        [
+          {
+            "node": "Has Aging Content?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Aging Content?": {
+      "main": [
+        [
+          {
+            "node": "Add Aging Label",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Aging Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Aging Label": {
+      "main": [
+        [
+          {
+            "node": "Create Review Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

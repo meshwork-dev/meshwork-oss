@@ -1,0 +1,135 @@
+{
+  "name": "PM Self-Assessment - Weekly Product Health",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 16 * * 5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "pm-assess-001",
+      "name": "Weekly Friday 4pm"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Emit one item per active product for PM self-assessment\nconst dateKey = new Date().toISOString().split('T')[0];\nconst weekNum = Math.ceil((new Date().getTime() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000));\n\nconst products = [\n  {\n    id: 'EOS',\n    name: 'EstateOS',\n    workingDir: '{{DEFAULT_WORKING_DIR}}',\n    domain: 'estate planning & probate'\n  },\n  {\n    id: 'CER',\n    name: 'CertPilot',\n    workingDir: '{{DEFAULT_WORKING_DIR}}',\n    domain: 'supply chain compliance & certification'\n  },\n  {\n    id: 'WMS',\n    name: 'WarrantyManagement',\n    workingDir: '{{DEFAULT_WORKING_DIR}}',\n    domain: 'warranty claims & RMA'\n  }\n];\n\nreturn products.map(p => ({\n  json: {\n    ...p,\n    dateKey,\n    weekNum,\n    idempotencyKey: `pm-self-assess:${p.id}:${dateKey}`\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "pm-assess-002",
+      "name": "Prepare Product List"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/agent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"product-manager\",\n  \"productId\": \"{{ $json.id }}\",\n  \"prompt\": \"Run your self-assessment skill (pm-self-assess). Perform a full Product Function Health Report for {{ $json.name }}. Analyse: 1) KPI data from /api/kpi, 2) Recent sprint outcomes and Jira patterns, 3) Pipeline completion rates and stall points, 4) Agent consultation frequency - which agents do you keep needing?, 5) Domain coverage gaps - what {{ $json.domain }} expertise is missing from the agent roster? Produce the report with specific, domain-grounded proposals. Post the report summary to Telegram.\",\n  \"model\": \"opus\",\n  \"telegram\": {\n    \"chatId\": \"{{TELEGRAM_ADMIN_CHAT_ID}}\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "pm-assess-003",
+      "name": "Dispatch PM Self-Assessment",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "{{TELEGRAM_ADMIN_CHAT_ID}}",
+        "text": "=*PM Self-Assessment Dispatched*\n\nProduct: {{ $('Prepare Product List').item.json.name }} ({{ $('Prepare Product List').item.json.id }})\nDomain: {{ $('Prepare Product List').item.json.domain }}\nWeek: {{ $('Prepare Product List').item.json.weekNum }}\n\nThe product manager is analysing the product function health.\nFull report will follow when complete.",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "pm-assess-004",
+      "name": "Notify Mark",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Friday 4pm": {
+      "main": [
+        [
+          {
+            "node": "Prepare Product List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Product List": {
+      "main": [
+        [
+          {
+            "node": "Dispatch PM Self-Assessment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch PM Self-Assessment": {
+      "main": [
+        [
+          {
+            "node": "Notify Mark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

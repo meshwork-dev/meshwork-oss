@@ -1,0 +1,153 @@
+{
+  "name": "Code Analysis - Local Model Pre-Read",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "code-analysis",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook - Code Analysis",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        250,
+        300
+      ],
+      "webhookId": ""
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the LM Studio prompt from incoming file contents + question\nconst body = $input.first().json.body || $input.first().json;\n\nconst files = body.files || [];\nconst question = body.question || 'Analyse the codebase structure and key patterns';\nconst maxTokens = body.maxTokens || 4096;\n\n// Build file content section\nconst fileSection = files.map(f => `### ${f.path}\\n\\`\\`\\`\\n${f.content}\\n\\`\\`\\``).join('\\n\\n');\n\nconst systemPrompt = 'You are a codebase analyst. Given project files and a question, produce a concise structured analysis. Be factual and precise.';\n\nconst userPrompt = `## Question\\n${question}\\n\\n## Project Files (${files.length} files)\\n${fileSection}\\n\\n## Instructions\\nProduce a structured analysis with these sections:\\n1. **Project Structure**: Architecture, framework, key directories\\n2. **Relevant Files**: Files most relevant to the question, with brief descriptions\\n3. **Key Patterns**: Conventions, abstractions, naming patterns used\\n4. **Dependencies**: Relevant packages and their purpose\\n5. **Suggested Approach**: How to approach the task given the codebase\\n\\nKeep total output under 3000 words. Be concise.`;\n\nreturn [{\n  json: {\n    systemPrompt,\n    userPrompt,\n    maxTokens,\n    model: body.model || ''\n  }\n}];"
+      },
+      "id": "build-prompt",
+      "name": "Build LM Studio Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        470,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:1234/v1/chat/completions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messages: [ { role: 'system', content: $json.systemPrompt }, { role: 'user', content: $json.userPrompt } ], temperature: 0.3, max_tokens: $json.maxTokens, stream: false, ...(($json.model) ? { model: $json.model } : {}) }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "call-lmstudio",
+      "name": "Call LM Studio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        690,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract the analysis from LM Studio response\nconst response = $input.first().json;\nconst analysis = response.choices?.[0]?.message?.content || '';\nconst model = response.model || 'local';\nconst usage = response.usage || {};\n\nreturn [{\n  json: {\n    ok: true,\n    analysis,\n    model,\n    usage: {\n      promptTokens: usage.prompt_tokens || 0,\n      completionTokens: usage.completion_tokens || 0,\n      totalTokens: usage.total_tokens || 0\n    }\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        910,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1130,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: 'LM Studio call failed: ' + ($input.first().json?.message || 'unknown error') }) }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        910,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook - Code Analysis": {
+      "main": [
+        [
+          {
+            "node": "Build LM Studio Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LM Studio Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call LM Studio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LM Studio": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

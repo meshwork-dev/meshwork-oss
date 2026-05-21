@@ -1,0 +1,137 @@
+{
+  "name": "Sales Pipeline Report - Weekly",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 1 * * 5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "sales-report-001",
+      "name": "Weekly Friday 4pm"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate pipeline report request\nconst weekDate = new Date().toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    weekDate,\n    idempotencyKey: `sales-pipeline-report:weekly:${weekDate}`,\n    prompt: `Generate weekly pipeline report. Summarise: new prospects added this week, status changes, hot leads requiring action, outreach results, competitive intelligence updates. Update the Sales Pipeline Report in Confluence. Post a summary to the sales space.`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "sales-report-002",
+      "name": "Prepare Report Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/agent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"sales-development\",\n  \"prompt\": {{ JSON.stringify($json.prompt) }},\n  \"context\": \"Scheduled weekly pipeline report. Week ending: {{ $json.weekDate }}\",\n  \"source\": {\n    \"workflow\": \"Sales_Pipeline_Report\",\n    \"triggeredBy\": \"schedule:weekly-pipeline-report\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "sales-report-003",
+      "name": "Dispatch Sales Development",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_SALES }}",
+        "text": "*Weekly Pipeline Report Started*\n\nWeek ending: {{ $('Prepare Report Request').item.json.weekDate }}\n\nGenerating pipeline summary. Full report will be posted to Confluence and a summary here when complete.",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "sales-report-004",
+      "name": "Notify Sales Space",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Friday 4pm": {
+      "main": [
+        [
+          {
+            "node": "Prepare Report Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Report Request": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Sales Development",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Sales Development": {
+      "main": [
+        [
+          {
+            "node": "Notify Sales Space",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}

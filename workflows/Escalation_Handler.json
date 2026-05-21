@@ -1,0 +1,90 @@
+{
+  "name": "Escalation Handler - Human Approval for Agent Decisions",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "escalation/review",
+        "options": {
+          "responseData": "={ \"ok\": true, \"message\": \"Escalation received\" }"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "escalation-001",
+      "name": "Escalation Webhook",
+      "webhookId": ""
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format escalation message with inline keyboard for Telegram\nconst body = $json.body || $json;\nconst type = body.type || 'unknown';\nconst issueKey = body.issueKey || 'N/A';\nconst agent = body.agent || 'unknown';\nconst reason = body.reason || 'No reason provided';\nconst options = body.options || {};\nconst meetingId = body.meetingId || null;\n\n// Generate a unique escalation ID\nconst escId = `${issueKey}-${Date.now()}`;\n\n// Type-specific icon and label\nconst typeConfig = {\n  'budget-exceeded': { icon: '[BUDGET]', label: 'Budget Exceeded' },\n  'security-critical': { icon: '[SECURITY]', label: 'Security Critical' },\n  'architecture-change': { icon: '[ARCH]', label: 'Architecture Change' },\n  'customer-facing': { icon: '[CUSTOMER]', label: 'Customer-Facing Change' },\n  'priority-override': { icon: '[PRIORITY]', label: 'Priority Override' }\n};\n\nconst config = typeConfig[type] || { icon: '[ESCALATION]', label: type };\n\n// Build the message text\nlet messageText = `${config.icon} *Escalation: ${config.label}*\\n\\n`;\nmessageText += `*Issue*: ${issueKey}\\n`;\nmessageText += `*Agent*: ${agent}\\n`;\nmessageText += `*Reason*: ${reason}\\n`;\n\nif (options.currentCost) {\n  messageText += `*Current Cost*: $${options.currentCost}\\n`;\n}\nif (options.requestedBudget) {\n  messageText += `*Requested Budget*: $${options.requestedBudget}\\n`;\n}\nif (options.affectedFiles) {\n  messageText += `*Affected Files*: ${Array.isArray(options.affectedFiles) ? options.affectedFiles.join(', ') : options.affectedFiles}\\n`;\n}\nif (options.riskLevel) {\n  messageText += `*Risk Level*: ${options.riskLevel}\\n`;\n}\nif (meetingId) {\n  messageText += `*Meeting*: ${meetingId}\\n`;\n}\n\nmessageText += `\\n*Time*: ${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC`;\n\n// Build inline keyboard JSON for reply_markup\nconst replyMarkup = JSON.stringify({\n  inline_keyboard: [\n    [\n      { text: 'Approve', callback_data: `esc_approve_${escId}` },\n      { text: 'Reject', callback_data: `esc_reject_${escId}` },\n      { text: 'Defer', callback_data: `esc_defer_${escId}` }\n    ]\n  ]\n});\n\nreturn [{\n  json: {\n    escId,\n    type,\n    issueKey,\n    agent,\n    reason,\n    messageText,\n    replyMarkup\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "escalation-002",
+      "name": "Format Escalation"
+    },
+    {
+      "parameters": {
+        "chatId": "{{TELEGRAM_ADMIN_CHAT_ID}}",
+        "text": "={{ $json.messageText }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true,
+          "reply_markup": "={{ $json.replyMarkup }}"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "escalation-003",
+      "name": "Send Escalation to Mark",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Escalation Webhook": {
+      "main": [
+        [
+          {
+            "node": "Format Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Escalation": {
+      "main": [
+        [
+          {
+            "node": "Send Escalation to Mark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "triggerCount": 1,
+  "active": false
+}
