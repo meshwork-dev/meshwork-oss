@@ -1415,13 +1415,28 @@ function detectImplicitGateNeed(meeting, summary) {
   }
 
   // 3. Multi-product touch (more than one Jira project key or product name)
+  // Derives keys/names dynamically from the registered products map so any
+  // deployment's product set is honoured (no hardcoded list).
   const projects = new Set();
-  const issueKeyMatches = summary.match(/\b(CER|EOS|WMS|LEBC)-\d+\b/g) || [];
-  for (const m of issueKeyMatches) projects.add(m.split("-")[0]);
-  const productMatches = summary.match(/\b(CertPilot|EstateOS|WarrantyManagement|LEBC)\b/g) || [];
-  for (const m of productMatches) {
-    const map = { CertPilot: "CER", EstateOS: "EOS", WarrantyManagement: "WMS", LEBC: "LEBC" };
-    projects.add(map[m] || m);
+  const projectKeys = [];
+  const productNames = [];
+  const nameToKey = {};
+  for (const [, p] of products) {
+    if (p?.jira?.projectKey) projectKeys.push(p.jira.projectKey);
+    if (p?.name) {
+      productNames.push(p.name);
+      if (p.jira?.projectKey) nameToKey[p.name] = p.jira.projectKey;
+    }
+  }
+  if (projectKeys.length) {
+    const keyRe = new RegExp(`\\b(${projectKeys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})-\\d+\\b`, "g");
+    const issueKeyMatches = summary.match(keyRe) || [];
+    for (const m of issueKeyMatches) projects.add(m.split("-")[0]);
+  }
+  if (productNames.length) {
+    const nameRe = new RegExp(`\\b(${productNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`, "g");
+    const productMatches = summary.match(nameRe) || [];
+    for (const m of productMatches) projects.add(nameToKey[m] || m);
   }
   if (projects.size > 1) reasons.push(`products>1(${[...projects].join(",")})`);
 
@@ -4184,7 +4199,7 @@ function mergeBranchIntoDev(baseRepo, featureBranch, issueKey) {
           `git merge ${featureBranch} --no-ff -m "Merge ${featureBranch} into ${mergeBranch}${issueKey ? ` (${issueKey})` : ""}"`,
           {
             cwd: tmpWorktree, encoding: "utf8", timeout: 30000, stdio: "pipe",
-            env: { ...process.env, GIT_AUTHOR_NAME: "CertPilot Runner", GIT_AUTHOR_EMAIL: "runner@certpilot.dev", GIT_COMMITTER_NAME: "CertPilot Runner", GIT_COMMITTER_EMAIL: "runner@certpilot.dev" }
+            env: { ...process.env, GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "CertPilot Runner", GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid", GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME || "CertPilot Runner", GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid" }
           }
         );
       } catch (mergeErr) {
@@ -4307,7 +4322,7 @@ function stashDirtyWorkingDir(workingDir, issueKey) {
       `git commit -m "safety: in-progress WIP stashed before pipeline${issueKey ? ` ${issueKey}` : ''}\n\nAuto-stashed by CertPilot Runner. Review and merge or discard."`,
       {
         cwd: workingDir, encoding: "utf8", timeout: 30000, stdio: "pipe",
-        env: { ...process.env, GIT_AUTHOR_NAME: "CertPilot Runner", GIT_AUTHOR_EMAIL: "runner@certpilot.dev", GIT_COMMITTER_NAME: "CertPilot Runner", GIT_COMMITTER_EMAIL: "runner@certpilot.dev" }
+        env: { ...process.env, GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "CertPilot Runner", GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid", GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME || "CertPilot Runner", GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid" }
       }
     );
     try {
@@ -6371,7 +6386,7 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
         execSync("git add -A", { cwd: phaseDir, encoding: "utf8", timeout: 15000 });
         execSync(`git commit -m "feat: ${phase.name} phase complete (${pipeline.issueKey})\n\nPipeline: ${pipeline.pipelineId}\nAgent: ${phase.agent}"`, {
           cwd: phaseDir, encoding: "utf8", timeout: 30000,
-          env: { ...process.env, GIT_AUTHOR_NAME: "CertPilot Runner", GIT_AUTHOR_EMAIL: "runner@certpilot.dev", GIT_COMMITTER_NAME: "CertPilot Runner", GIT_COMMITTER_EMAIL: "runner@certpilot.dev" }
+          env: { ...process.env, GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "CertPilot Runner", GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid", GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME || "CertPilot Runner", GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid" }
         });
         console.log(`[${nowIso()}] Auto-committed uncommitted changes in worktree for ${pipeline.issueKey} phase ${phase.name}`);
       }
