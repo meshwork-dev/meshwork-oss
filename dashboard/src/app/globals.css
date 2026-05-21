@@ -1,0 +1,42 @@
+
+@import "tailwindcss";
+
+/* Responsive tweaks for mobile */
+html {
+	scroll-behavior: smooth;
+}
+
+body {
+	min-height: 100vh;
+}
+
+@media (max-width: 768px) {
+	.dashboard-container {
+		padding: 8px !important;
+	}
+	.dashboard-header {
+		font-size: 1.1em !important;
+	}
+	.dashboard-card {
+		width: 100% !important;
+		margin-bottom: 12px !important;
+	}
+	.StatCard {
+		min-width: 0 !important;
+		flex: 1 1 100%;
+	}
+	.bg-zinc-900, .border-zinc-800, .rounded-xl, .p-5 {
+		border-radius: 0.75rem !important;
+		padding: 1rem !important;
+	}
+}
+
+@media (max-width: 600px) {
+	.StatCard {
+		font-size: 1rem !important;
+		padding: 0.5rem !important;
+	}
+	.dashboard-header {
+		font-size: 1em !important;
+	}
+}

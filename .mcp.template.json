@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "issues": {
+      "command": "node",
+      "args": ["__RUNNER_DIR__/issue-mcp.js"],
+      "env": {
+        "RUNNER_URL": "__RUNNER_URL__",
+        "RUNNER_SECRET": "__RUNNER_SECRET__"
+      }
+    }
+  }
+}

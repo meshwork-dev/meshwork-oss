@@ -1,0 +1,21 @@
+{
+  "name": "CertPilot Dashboard",
+  "short_name": "CertPilot",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#18181b",
+  "theme_color": "#14b8a6",
+  "description": "Runner monitoring and management dashboard.",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -1,0 +1,239 @@
+{
+  "port": 3210,
+  "host": "0.0.0.0",
+  "jobTimeoutMinutes": 60,
+  "maxConcurrencyPerProduct": 2,
+  "maxRetries": 3,
+  "sseEnabled": true,
+  "convStaleDays": 30,
+  "jobStateRetentionDays": 7,
+  "convTurns": 16,
+  "convMaxChars": 24000,
+  "idempotencyTtlHours": 72,
+  "workingDir": "__WORKING_DIR__",
+  "callbackUrl": "__CALLBACK_URL__",
+  "logDir": "~/claude-runner-logs",
+  "convDir": "~/claude-runner-logs/conversations",
+  "sharedSkillsDir": "shared-skills",
+  "allowedRoots": [],
+  "tokenPricing": {
+    "inputPerMillion": 15.00,
+    "outputPerMillion": 75.00
+  },
+  "protectHealthEndpoint": true,
+  "protectDashboard": true,
+  "dashboardOrigins": ["http://localhost:3100"],
+  "dashboardUrl": "http://localhost:3100",
+  "logRetentionDays": 30,
+  "alerting": {
+    "slackWebhookUrl": null
+  },
+  "budget": {
+    "enabled": true,
+    "dailyLimitUsd": 300,
+    "hourlyLimitUsd": 40
+  },
+  "notifications": {
+    "webhookUrl": "__NOTIFICATION_WEBHOOK_URL__"
+  },
+  "integrations": {
+    "jira": { "enabled": "__JIRA_ENABLED__" },
+    "telegram": { "enabled": "__TELEGRAM_ENABLED__" },
+    "n8n": { "enabled": "__N8N_ENABLED__" }
+  },
+  "providers": {
+    "claude": {
+      "baseUrl": null,
+      "authTokenEnvVar": "ANTHROPIC_API_KEY"
+    }
+  },
+  "claude": {
+    "command": "claude",
+    "baseArgs": ["--dangerously-skip-permissions"],
+    "models": {
+      "opus": "claude-opus-4-6",
+      "sonnet": "claude-sonnet-4-6",
+      "haiku": "claude-haiku-4-5-20251001"
+    }
+  },
+  "routing": {
+    "enabled": true,
+    "agentToProvider": {},
+    "agentToModel": {
+      "engineer-planner": "sonnet",
+      "engineer-implementer": "sonnet",
+      "engineer-reviewer": "opus",
+      "product-manager": "opus",
+      "marketing": "sonnet",
+      "bug-triage": "opus",
+      "sprint-reporter": "sonnet",
+      "ui-engineer": "sonnet",
+      "ba-agent": "sonnet",
+      "architect-jets": "sonnet",
+      "ux-agent": "sonnet",
+      "qa-agent": "sonnet",
+      "security-agent": "sonnet",
+      "ask-tom-agent": "opus",
+      "e2e-builder": "sonnet",
+      "uat-agent": "sonnet"
+    },
+    "modeDefaults": {
+      "delivery": "sonnet",
+      "chat": "haiku"
+    },
+    "agentToolRestrictions": {
+      "engineer-reviewer": {
+        "disallowedTools": ["Edit", "Write", "NotebookEdit", "Bash"]
+      }
+    }
+  },
+  "qualityGate": {
+    "enabled": true,
+    "runAfterAgents": ["engineer-implementer", "e2e-builder"],
+    "checks": [
+      { "name": "type-check", "cmd": "npm run type-check", "required": true },
+      { "name": "lint", "cmd": "npm run lint", "required": true },
+      { "name": "test", "cmd": "npm test", "required": true }
+    ],
+    "maxRetries": 2,
+    "retryWithContext": true
+  },
+  "fixLoop": {
+    "enabled": true,
+    "maxAttempts": 3,
+    "gateTypes": ["quality-gate"]
+  },
+  "chrome": {
+    "enabled": false
+  },
+  "subtasks": {
+    "enabled": true,
+    "maxConcurrency": 3,
+    "maxPerParent": 3,
+    "maxDepth": 3,
+    "parallelAgents": ["engineer-implementer", "ui-engineer"]
+  },
+  "teams": {
+    "enabled": true,
+    "teamLeads": {
+      "engineer-planner": {
+        "teammates": ["engineer-implementer", "ui-engineer", "engineer-reviewer"],
+        "teammateMode": "in-process"
+      },
+      "product-manager": {
+        "teammates": ["ba-agent"],
+        "teammateMode": "in-process"
+      }
+    }
+  },
+  "pipelines": {
+    "new-feature": {
+      "description": "Implement, review, verify",
+      "phases": [
+        {
+          "name": "implementation",
+          "agent": "engineer-implementer",
+          "model": "sonnet",
+          "team": false,
+          "gate": { "type": "quality-gate" }
+        },
+        {
+          "name": "code-review",
+          "agent": "engineer-reviewer",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-REVIEW]" }
+        },
+        {
+          "name": "verify",
+          "agent": "qa-agent",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-VERIFY]" }
+        }
+      ]
+    },
+    "bug-fix": {
+      "description": "Bug fix: implement + review + verify",
+      "phases": [
+        {
+          "name": "implementation",
+          "agent": "engineer-implementer",
+          "model": "sonnet",
+          "team": false,
+          "gate": { "type": "quality-gate" }
+        },
+        {
+          "name": "code-review",
+          "agent": "engineer-reviewer",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-REVIEW]" }
+        },
+        {
+          "name": "verify",
+          "agent": "qa-agent",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-VERIFY]" }
+        }
+      ]
+    },
+    "security-fix": {
+      "description": "Security fix: implement + security review + verify",
+      "phases": [
+        {
+          "name": "implementation",
+          "agent": "engineer-implementer",
+          "model": "sonnet",
+          "team": false,
+          "gate": { "type": "quality-gate" }
+        },
+        {
+          "name": "security-review",
+          "agent": "security-agent",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-SECURITY-REVIEW]" }
+        },
+        {
+          "name": "verify",
+          "agent": "qa-agent",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-VERIFY]" }
+        }
+      ]
+    }
+  },
+  "contextBridge": {
+    "enabled": true,
+    "maxSummaryWords": 300,
+    "compactMaxWords": 120
+  },
+  "dependencyGating": {
+    "enabled": false
+  },
+  "worktrees": {
+    "enabled": false,
+    "baseDir": "~/certpilot-worktrees",
+    "maxPerRepo": 20,
+    "pruneOnStartup": false
+  },
+  "jira": {
+    "domain": "__JIRA_DOMAIN__",
+    "email": "__JIRA_EMAIL__",
+    "apiToken": ""
+  },
+  "meetings": {
+    "contextWebhookUrl": null,
+    "outcomesWebhookUrl": null,
+    "jiraProject": "__PROJECT_KEY__",
+    "scheduledMeetings": [],
+    "allowedTools": [
+      "mcp__issues__search_issues",
+      "mcp__issues__get_issue",
+      "mcp__issues__add_comment",
+      "mcp__issues__get_transitions",
+      "mcp__issues__transition_issue",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "autoDispatchActions": true
+  }
+}

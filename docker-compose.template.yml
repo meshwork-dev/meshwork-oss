@@ -1,0 +1,82 @@
+services:
+  runner:
+    build: ./claude-runner
+    container_name: certpilot-runner
+    restart: unless-stopped
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 12g
+    ports:
+      - "3210:3210"
+    env_file:
+      - .env
+    environment:
+      - JIRA_EMAIL=${JIRA_EMAIL:-}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
+      - CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+      - RUNNER_DB_HOST=postgres
+      - RUNNER_DB_PORT=5432
+      - RUNNER_DB_NAME=runner
+      - RUNNER_DB_USER=runner
+      - RUNNER_DB_PASSWORD=${RUNNER_DB_PASSWORD:-runner_secure_password}
+    volumes:
+      - ${HOME}/.claude:/home/node/.claude
+      - ${HOME}/.claude.json:/home/node/.claude.json.host:ro
+      - ${HOME}/claude-runner-logs:/data/logs
+      - ./shared-skills:/shared-skills:ro
+      - ./products:/products:ro
+      # __PLUGIN_VOLUMES__
+      # __PROJECT_VOLUMES__
+      - ${HOME}/certpilot-worktrees:/data/worktrees
+    stop_grace_period: 15s
+    networks:
+      - certpilot
+
+  dashboard:
+    build: ./dashboard
+    container_name: certpilot-dashboard
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    environment:
+      - NEXT_PUBLIC_RUNNER_URL=http://localhost:3210
+      - PORT=3100
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD}
+      - RUNNER_SECRET=${RUNNER_SECRET}
+    depends_on:
+      - runner
+    networks:
+      - certpilot
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: certpilot-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=runner
+      - POSTGRES_PASSWORD=${RUNNER_DB_PASSWORD:-runner_secure_password}
+      - POSTGRES_DB=runner
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - certpilot
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U runner"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # __N8N_SERVICE__
+  # __NGROK_SERVICE__
+
+volumes:
+  postgres-data:
+
+networks:
+  certpilot:
+    driver: bridge

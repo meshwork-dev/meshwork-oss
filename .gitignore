@@ -1,0 +1,34 @@
+# Environment files
+.env
+.env.local
+
+# Dependencies
+node_modules/
+
+# Next.js
+dashboard/.next/
+dashboard/out/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code local config
+.claude/settings.local.json
+
+# Runner logs and state
+claude-runner-logs/
+
+# N8N data
+n8n/n8n_data/
+
+# Docker volumes
+docker-data/
+
+# Video renders (large files, rendered on demand)
+**/docs/user-guides/videos/
+**/video-manifests/audio/
+**/video-manifests/_rendered-manifest.json
