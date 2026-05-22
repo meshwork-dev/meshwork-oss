@@ -1,0 +1,52 @@
+name: Lint agent frontmatter
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'templates/agents/**/*.md'
+      - 'shared-skills/agents/**/*.md'
+      - '**/*-plugin/agents/**/*.md'
+      - 'scripts/lint-agents.mjs'
+      - '.github/workflows/lint-agents.yml'
+  pull_request:
+    paths:
+      - 'templates/agents/**/*.md'
+      - 'shared-skills/agents/**/*.md'
+      - '**/*-plugin/agents/**/*.md'
+      - 'scripts/lint-agents.mjs'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install js-yaml
+        run: npm install --no-save js-yaml@4
+
+      - name: Lint agent frontmatter
+        run: node scripts/lint-agents.mjs
+
+      - name: Check for unresolved template placeholders
+        run: |
+          # Templates may contain __PLACEHOLDER__ tokens (they get substituted at setup time).
+          # But shared-skills agents and committed plugin agents must NOT have them.
+          if grep -rEn '__[A-Z_]+__' shared-skills/agents/ 2>/dev/null; then
+            echo "::error::Unresolved __PLACEHOLDER__ tokens in shared-skills/agents/"
+            exit 1
+          fi
+          # Also check shipped plugins outside the template dir.
+          for plugindir in *-plugin/agents/; do
+            [ -d "$plugindir" ] || continue
+            if grep -rEn '__[A-Z_]+__' "$plugindir" 2>/dev/null; then
+              echo "::error::Unresolved __PLACEHOLDER__ tokens in $plugindir"
+              exit 1
+            fi
+          done
+          echo "No unresolved placeholders outside templates/."

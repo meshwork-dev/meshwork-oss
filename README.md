@@ -36,7 +36,7 @@ cd meshwork
 # Open http://localhost:3100
 ```
 
-The setup wizard handles configuration in ~5 minutes. Defaults are sane; external integrations are optional.
+The setup wizard handles configuration in ~5 minutes. Defaults are sane; external integrations are optional. New to the platform? See the [5-minute getting-started walkthrough](./docs/getting-started.md).
 
 ### Prerequisites
 
@@ -112,8 +112,12 @@ Two execution modes: **DELIVERY** (`/run`, issue-driven) and **CHAT** (`/chat`, 
 | `ux-agent` | UX/UI design specifications | Sonnet |
 | `ask-dave-agent` | Deep problem-solving and troubleshooting | Opus |
 | `e2e-builder` | Full-lifecycle feature builder | Sonnet |
+| `uat-agent` | Playwright-based User Acceptance Testing | Sonnet |
+| `codebase-locator` | Utility: locate files relevant to a feature | Opus |
+| `codebase-analyzer` | Utility: explain HOW code works with file:line refs | Opus |
+| `codebase-pattern-finder` | Utility: find existing patterns to model after | Opus |
 
-Agents are plain Markdown with YAML frontmatter — write your own and drop them into `shared-skills/agents/` or a product plugin. See [docs/agents.md](./docs/agents.md).
+Agents are plain Markdown with YAML frontmatter — write your own and drop them into `shared-skills/agents/` or a product plugin. See [docs/agents.md](./docs/agents.md). New to Meshwork? Start with the [getting-started walkthrough](./docs/getting-started.md).
 
 ## API
 

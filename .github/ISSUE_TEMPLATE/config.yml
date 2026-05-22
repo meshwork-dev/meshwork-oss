@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/meshwork-dev/meshwork/security/advisories/new
+    about: Report security issues privately — do not open a public issue.
+  - name: Question or discussion
+    url: https://github.com/meshwork-dev/meshwork/discussions
+    about: Stuck on setup, want to ask a "how do I…", or pitch a big idea? Start here.

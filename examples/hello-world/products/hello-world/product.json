@@ -1,0 +1,19 @@
+{
+  "id": "hello-world",
+  "name": "Hello World",
+  "description": "Hello World — managed by Meshwork-AutoDev",
+  "workingDir": "/Users/you/code/hello-world",
+  "pluginDir": "hello-world-plugin",
+  "jira": {
+    "domain": "",
+    "projectKey": "HELLO",
+    "projectName": "Hello World"
+  },
+  "techStack": {
+    "description": "Node.js, Express"
+  },
+  "sprint": {
+    "enabled": false,
+    "projectKey": "HELLO"
+  }
+}
