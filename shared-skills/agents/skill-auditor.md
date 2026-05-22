@@ -55,7 +55,7 @@ Read the skill file and check:
 
 Extract all bash commands from the skill (```bash blocks). For each command:
 - Check if the binary/script exists in the working dir
-- Verify commands against `package.json` scripts section (Read `<WORKING_DIR>/package.json` or `<WORKING_DIR>/lebc-client/package.json` etc.)
+- Verify commands against `package.json` scripts section (Read `<WORKING_DIR>/package.json` or any nested `<WORKING_DIR>/<sub-package>/package.json` etc.)
 - Verify npm package versions claimed in the skill against `package.json` / `package-lock.json`
 
 ```bash
@@ -65,7 +65,7 @@ cat <WORKING_DIR>/package.json | python3 -c "import json,sys; d=json.load(sys.st
 
 #### 2b. File Path Verification
 
-Extract all file paths mentioned in the skill (e.g., `src/routes/`, `lebc-client/src/`). For each:
+Extract all file paths mentioned in the skill (e.g., `src/routes/`, `<sub-package>/src/`). For each:
 ```bash
 ls <WORKING_DIR>/<path> 2>/dev/null || echo "MISSING"
 ```

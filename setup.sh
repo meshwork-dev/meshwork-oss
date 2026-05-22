@@ -378,6 +378,7 @@ setup_product() {
   PRODUCT_PREFIX="$(printf '%s' "$PRODUCT_PREFIX" | tr '[:lower:]' '[:upper:]')"
   PRODUCT_DIR="$(prompt_value "Codebase path (absolute path to your project)")"
   PRODUCT_TECH="$(prompt_value "Tech stack" "Next.js, Express, PostgreSQL")"
+  PRODUCT_DESC="$(prompt_value "One-line product description" "${PRODUCT_NAME} — managed by Meshwork-AutoDev")"
 
   local id
   id="$(printf '%s' "$PRODUCT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-')"
@@ -425,6 +426,40 @@ EOF
 
 Refer to shared-skills/ for cross-cutting skills (security, QA, UX, BA, PM).
 EOF
+  fi
+
+  # Copy agent templates into <product>-plugin/agents/ with placeholder substitution.
+  # Only copies templates that don't already exist (idempotent — protects local edits).
+  local templates_dir="$SCRIPT_DIR/templates/agents"
+  local target_agents_dir="$SCRIPT_DIR/${PRODUCT_PLUGIN_DIR}/agents"
+  if [[ -d "$templates_dir" ]]; then
+    local copied=0
+    local skipped=0
+    for tpl in "$templates_dir"/*.md; do
+      [[ -e "$tpl" ]] || continue
+      local fname
+      fname="$(basename "$tpl")"
+      local target="$target_agents_dir/$fname"
+      if [[ -e "$target" ]]; then
+        skipped=$((skipped + 1))
+        continue
+      fi
+      # sed substitution. Use a non-`/` delimiter so paths with `/` are safe.
+      # NB: macOS sed requires `-i ''`; gnu sed accepts `-i`. We use a portable form
+      # by writing to a temp file then moving.
+      sed \
+        -e "s|__PRODUCT_NAME__|${PRODUCT_NAME}|g" \
+        -e "s|__PRODUCT_ID__|${id}|g" \
+        -e "s|__PRODUCT_DESCRIPTION__|${PRODUCT_DESC}|g" \
+        -e "s|__TECH_STACK__|${PRODUCT_TECH}|g" \
+        -e "s|__JIRA_PROJECT_KEY__|${PRODUCT_PREFIX}|g" \
+        -e "s|__WORKING_DIR__|${PRODUCT_DIR}|g" \
+        "$tpl" > "$target"
+      copied=$((copied + 1))
+    done
+    info "Agent templates: ${copied} copied, ${skipped} skipped (already exist) into ${PRODUCT_PLUGIN_DIR}/agents/"
+  else
+    warn "templates/agents/ not found — skipping agent scaffolding"
   fi
 
   success "Product '${PRODUCT_NAME}' (${id}) ready"
