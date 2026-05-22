@@ -39,12 +39,12 @@ def main():
         # Block everything else
         result = {
             "decision": "block",
-            "reason": f"OrchestraCode safety hook: Write blocked - '{file_path}' is outside project directory '{project_dir}'"
+            "reason": f"Meshwork safety hook: Write blocked - '{file_path}' is outside project directory '{project_dir}'"
         }
         print(json.dumps(result))
 
     except Exception as e:
-        print(json.dumps({"systemMessage": f"OrchestraCode guard_paths warning: {e}"}))
+        print(json.dumps({"systemMessage": f"Meshwork guard_paths warning: {e}"}))
 
     sys.exit(0)
 

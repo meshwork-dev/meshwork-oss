@@ -1,5 +1,5 @@
-const SECRET_KEY = "orchestracode-runner-secret";
-const AUTH_KEY = "orchestracode-authenticated";
+const SECRET_KEY = "meshwork-runner-secret";
+const AUTH_KEY = "meshwork-authenticated";
 
 export function getRunnerSecret(): string | null {
   if (typeof window === "undefined") return null;

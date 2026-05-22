@@ -220,7 +220,7 @@ function loadConfig() {
     // Worktree isolation configuration
     worktrees: {
       enabled: fileConfig.worktrees?.enabled || false,
-      baseDir: fileConfig.worktrees?.baseDir || "~/orchestracode-worktrees",
+      baseDir: fileConfig.worktrees?.baseDir || "~/meshwork-worktrees",
       maxPerRepo: fileConfig.worktrees?.maxPerRepo || 20,
       pruneOnStartup: fileConfig.worktrees?.pruneOnStartup !== false
     },
@@ -501,13 +501,13 @@ function resolveSharedSkillsDir() {
 
 /**
  * Resolve the product-specific plugin directory.
- * Falls back to the default orchestracode-plugin if no product-specific pluginDir is set.
+ * Falls back to the default meshwork-plugin if no product-specific pluginDir is set.
  */
 function resolvePluginDir(product) {
   if (product?.pluginDir) {
     return path.resolve(__dirname, '..', product.pluginDir);
   }
-  return config.pluginDir || path.resolve(__dirname, '..', 'orchestracode-plugin');
+  return config.pluginDir || path.resolve(__dirname, '..', 'meshwork-plugin');
 }
 
 /**
@@ -636,7 +636,7 @@ function buildOptimizedPluginDir(agentName, product, jobId, provider) {
   const pluginDir = resolvePluginDir(product);
   const sharedDir = resolveSharedSkillsDir();
   try {
-    const tmpBase = path.join(os.tmpdir(), `orchestracode-ctx-${jobId}`);
+    const tmpBase = path.join(os.tmpdir(), `meshwork-ctx-${jobId}`);
     const tmpSkills = path.join(tmpBase, 'skills');
     // Clean leftover dir from previous attempt — retries reuse jobId, so existing
     // symlinks would cause EEXIST on subsequent symlinkSync calls.
@@ -1847,7 +1847,7 @@ function buildOutcomesPrompt(meeting) {
     "If an action item cannot start until another action item in this list completes, add — DependsOn: [N] where N is the 1-based index of the prerequisite (e.g. DependsOn: [1] means it waits for action item 1; DependsOn: [1, 2] means it waits for both). Omit DependsOn if the task is independent. The runner uses these to set Jira blocks/is-blocked-by links and gates execution order automatically.",
     "",
     `CRITICAL: The Owner field MUST be one of these exact agent names (no prefix): ${[...new Set([...meeting.agents, ...allAgents])].join(", ")}`,
-    "Do NOT prefix with 'orchestracode:' or any namespace. Just the plain agent name (e.g. 'product-manager', NOT 'orchestracode:product-manager').",
+    "Do NOT prefix with 'meshwork:' or any namespace. Just the plain agent name (e.g. 'product-manager', NOT 'meshwork:product-manager').",
     "",
     "## Feature Subtasks",
     "For new features discussed in this meeting, break the work into TYPED SUBTASKS on the parent Jira story.",
@@ -3197,7 +3197,7 @@ async function dispatchMeetingActions(meeting) {
     const dependsOn = dependsOnStr
       ? dependsOnStr.split(",").map(s => parseInt(s.trim(), 10) - 1).filter(n => Number.isFinite(n) && n >= 0)
       : [];
-    // Strip namespace prefixes like "orchestracode:" that agents sometimes add
+    // Strip namespace prefixes like "meshwork:" that agents sometimes add
     if (owner.includes(":")) {
       owner = owner.split(":").pop();
     }
@@ -3774,7 +3774,7 @@ function applyDynamicPhaseGating(pipeline, phase, job) {
  */
 
 function resolveWorktreeBaseDir() {
-  const dir = config.worktrees?.baseDir || "~/orchestracode-worktrees";
+  const dir = config.worktrees?.baseDir || "~/meshwork-worktrees";
   return dir.replace(/^~/, os.homedir());
 }
 
@@ -4199,7 +4199,7 @@ function mergeBranchIntoDev(baseRepo, featureBranch, issueKey) {
           `git merge ${featureBranch} --no-ff -m "Merge ${featureBranch} into ${mergeBranch}${issueKey ? ` (${issueKey})` : ""}"`,
           {
             cwd: tmpWorktree, encoding: "utf8", timeout: 30000, stdio: "pipe",
-            env: { ...process.env, GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "OrchestraCode Runner", GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid", GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME || "OrchestraCode Runner", GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid" }
+            env: { ...process.env, GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "Meshwork Runner", GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid", GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME || "Meshwork Runner", GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid" }
           }
         );
       } catch (mergeErr) {
@@ -4319,10 +4319,10 @@ function stashDirtyWorkingDir(workingDir, issueKey) {
     execSync(`git checkout -b ${stashedBranch}`, { cwd: workingDir, encoding: "utf8", timeout: 10000, stdio: "pipe" });
     execSync("git add -A", { cwd: workingDir, encoding: "utf8", timeout: 30000, stdio: "pipe" });
     execSync(
-      `git commit -m "safety: in-progress WIP stashed before pipeline${issueKey ? ` ${issueKey}` : ''}\n\nAuto-stashed by OrchestraCode Runner. Review and merge or discard."`,
+      `git commit -m "safety: in-progress WIP stashed before pipeline${issueKey ? ` ${issueKey}` : ''}\n\nAuto-stashed by Meshwork Runner. Review and merge or discard."`,
       {
         cwd: workingDir, encoding: "utf8", timeout: 30000, stdio: "pipe",
-        env: { ...process.env, GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "OrchestraCode Runner", GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid", GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME || "OrchestraCode Runner", GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid" }
+        env: { ...process.env, GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "Meshwork Runner", GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid", GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME || "Meshwork Runner", GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid" }
       }
     );
     try {
@@ -6386,7 +6386,7 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
         execSync("git add -A", { cwd: phaseDir, encoding: "utf8", timeout: 15000 });
         execSync(`git commit -m "feat: ${phase.name} phase complete (${pipeline.issueKey})\n\nPipeline: ${pipeline.pipelineId}\nAgent: ${phase.agent}"`, {
           cwd: phaseDir, encoding: "utf8", timeout: 30000,
-          env: { ...process.env, GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "OrchestraCode Runner", GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid", GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME || "OrchestraCode Runner", GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid" }
+          env: { ...process.env, GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "Meshwork Runner", GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid", GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME || "Meshwork Runner", GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || process.env.GIT_AUTHOR_EMAIL || "runner@local.invalid" }
         });
         console.log(`[${nowIso()}] Auto-committed uncommitted changes in worktree for ${pipeline.issueKey} phase ${phase.name}`);
       }
@@ -10427,7 +10427,7 @@ function extractResultText(runResult) {
 function buildConsultSectionForChatAgent(job) {
   return [
     "", "## Consulting Other Agents",
-    "You can consult other OrchestraCode agents for their expertise. Use this when a question falls outside your domain.",
+    "You can consult other Meshwork agents for their expertise. Use this when a question falls outside your domain.",
     "",
     "Available agents you can consult:",
     "- engineer-planner: Technical planning, architecture decisions, implementation strategy",
@@ -10460,7 +10460,7 @@ function buildConsultSectionForChatAgent(job) {
 function buildConsultSectionForAgentPrompt(job, agentName) {
   return [
     "", "## Consulting Other Agents",
-    "You can consult other OrchestraCode agents for their expertise. Use this when a question falls outside your domain.",
+    "You can consult other Meshwork agents for their expertise. Use this when a question falls outside your domain.",
     "",
     "Available agents you can consult:",
     "- engineer-planner: Technical planning, architecture decisions, implementation strategy",
@@ -11014,13 +11014,13 @@ async function runClaude(job) {
       spawnEnv.CLAUDE_CODE_TASK_LIST_ID = job.issueKey;
       appendLog(job.logFile, `[${nowIso()}] Task list: ${job.issueKey} (shared across phases)\n`);
     }
-    if (job.agent) spawnEnv.ORCHESTRACODE_AGENT = job.agent;
-    if (job.issueKey) spawnEnv.ORCHESTRACODE_ISSUE = job.issueKey;
+    if (job.agent) spawnEnv.MESHWORK_AGENT = job.agent;
+    if (job.issueKey) spawnEnv.MESHWORK_ISSUE = job.issueKey;
     const _jobProductId = resolveProduct(job.workingDir);
-    if (_jobProductId) spawnEnv.ORCHESTRACODE_PRODUCT = _jobProductId;
-    if (Array.isArray(job.labels) && job.labels.length) spawnEnv.ORCHESTRACODE_LABELS = job.labels.join(",");
-    spawnEnv.ORCHESTRACODE_RUNNER_URL = process.env.RUNNER_INTERNAL_URL || `http://runner:${config.port || 3210}`;
-    if (process.env.RUNNER_SECRET) spawnEnv.ORCHESTRACODE_RUNNER_SECRET = process.env.RUNNER_SECRET;
+    if (_jobProductId) spawnEnv.MESHWORK_PRODUCT = _jobProductId;
+    if (Array.isArray(job.labels) && job.labels.length) spawnEnv.MESHWORK_LABELS = job.labels.join(",");
+    spawnEnv.MESHWORK_RUNNER_URL = process.env.RUNNER_INTERNAL_URL || `http://runner:${config.port || 3210}`;
+    if (process.env.RUNNER_SECRET) spawnEnv.MESHWORK_RUNNER_SECRET = process.env.RUNNER_SECRET;
 
     // Agent Teams: enable for team lead agents (skip for hybrid — runner manages teammates)
     if (config.teams?.enabled && config.teams.teamLeads?.[job.agent] && !job._hybridTeam) {

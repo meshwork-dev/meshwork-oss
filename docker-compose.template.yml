@@ -1,4 +1,4 @@
-# OrchestraCode-AutoDev — Docker Compose template
+# Meshwork-AutoDev — Docker Compose template
 #
 # Postgres is bundled by default (profile: bundled-db). To run against an
 # external Postgres instance, start the stack with:
@@ -12,7 +12,7 @@
 services:
   runner:
     build: ./claude-runner
-    container_name: orchestracode-runner
+    container_name: meshwork-runner
     restart: unless-stopped
     init: true
     depends_on:
@@ -55,14 +55,14 @@ services:
       # Primary product working directory; setup.sh writes per-product mounts
       # into docker-compose.override.yml as products are onboarded.
       - "${PROJECT_DIR:?Set PROJECT_DIR in .env or run ./setup.sh}:/projects/default"
-      - ${HOME}/orchestracode-worktrees:/data/worktrees
+      - ${HOME}/meshwork-worktrees:/data/worktrees
     stop_grace_period: 15s
     networks:
-      - orchestracode
+      - meshwork
 
   dashboard:
     build: ./dashboard
-    container_name: orchestracode-dashboard
+    container_name: meshwork-dashboard
     restart: unless-stopped
     ports:
       - "${DASHBOARD_PORT:-3100}:3100"
@@ -74,11 +74,11 @@ services:
     depends_on:
       - runner
     networks:
-      - orchestracode
+      - meshwork
 
   postgres:
     image: postgres:16-alpine
-    container_name: orchestracode-postgres
+    container_name: meshwork-postgres
     restart: unless-stopped
     profiles: ["bundled-db"]
     environment:
@@ -90,7 +90,7 @@ services:
       - n8n-postgres-data:/var/lib/postgresql/data
       - ./claude-runner/init-runner-db.sh:/docker-entrypoint-initdb.d/02-init-runner-db.sh:ro
     networks:
-      - orchestracode
+      - meshwork
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-n8n}"]
       interval: 10s
@@ -127,7 +127,7 @@ services:
       - N8N_DIAGNOSTICS_ENABLED=false
       - N8N_PERSONALIZATION_ENABLED=false
     networks:
-      - orchestracode
+      - meshwork
 
   # Optional: ngrok tunnel for exposing N8N webhooks publicly.
   # Enable with `docker compose --profile tunnel up -d`.
@@ -142,11 +142,11 @@ services:
     volumes:
       - ./n8n/ngrok.yml:/etc/ngrok.yml:ro
     networks:
-      - orchestracode
+      - meshwork
 
 volumes:
   n8n-postgres-data:
 
 networks:
-  orchestracode:
+  meshwork:
     driver: bridge

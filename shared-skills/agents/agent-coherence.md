@@ -25,12 +25,12 @@ You are an autonomous coherence verifier for agent definition files. You prevent
 ## Invocation Context
 
 You are invoked with:
-- `PRODUCT_ID`: e.g. `orchestracode`
+- `PRODUCT_ID`: e.g. `meshwork`
 - `PLUGIN_DIR`: absolute path to the product plugin directory
 - `WORKING_DIR`: absolute path to the product codebase
 - `JIRA_PROJECT_KEY`: e.g. `CER`
 - `SHARED_SKILLS_DIR`: absolute path to shared-skills
-- `AUTODEV_DIR`: absolute path to OrchestraCode-AutoDev
+- `AUTODEV_DIR`: absolute path to Meshwork-AutoDev
 
 ## Workflow
 

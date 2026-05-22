@@ -93,7 +93,7 @@ def load_runner_jobs():
         [
             "docker", "exec",
             "-e", "PGPASSWORD=runner_secure_password",
-            "orchestracode-postgres",
+            "meshwork-postgres",
             "psql", "-U", "runner", "-d", "runner",
             "-tA", "-F", "\x1f", "-c", sql,
         ],

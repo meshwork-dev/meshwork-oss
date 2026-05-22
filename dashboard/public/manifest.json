@@ -1,6 +1,6 @@
 {
-  "name": "OrchestraCode Dashboard",
-  "short_name": "OrchestraCode",
+  "name": "Meshwork Dashboard",
+  "short_name": "Meshwork",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#18181b",

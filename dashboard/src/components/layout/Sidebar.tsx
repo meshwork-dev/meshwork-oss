@@ -39,7 +39,7 @@ export function Sidebar() {
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex w-56 bg-zinc-950 border-r border-zinc-800 flex-col min-h-screen">
         <div className="p-4 border-b border-zinc-800">
-          <h1 className="text-lg font-bold text-teal-400 tracking-tight">OrchestraCode</h1>
+          <h1 className="text-lg font-bold text-teal-400 tracking-tight">Meshwork</h1>
           <p className="text-xs text-zinc-500">Runner Dashboard</p>
         </div>
         <nav className="flex-1 p-2 space-y-0.5">

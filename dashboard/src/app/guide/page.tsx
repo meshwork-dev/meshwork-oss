@@ -28,7 +28,7 @@ function QuickStartSection() {
       <Card>
         <CardHeader><CardTitle>How It Works</CardTitle></CardHeader>
         <p className="text-sm text-zinc-300 leading-relaxed">
-          OrchestraCode connects <strong className="text-white">Jira</strong>, <strong className="text-white">Slack</strong>, <strong className="text-white">N8N</strong>, and <strong className="text-white">Claude Code</strong> into
+          Meshwork connects <strong className="text-white">Jira</strong>, <strong className="text-white">Slack</strong>, <strong className="text-white">N8N</strong>, and <strong className="text-white">Claude Code</strong> into
           an automated development pipeline. Tasks flow in from multiple sources, get routed to specialised AI agents,
           and results are posted back automatically.
         </p>
@@ -416,7 +416,7 @@ function GuidePage() {
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-bold text-white">Guide</h2>
-        <p className="text-sm text-zinc-400 mt-0.5">How to use OrchestraCode automation — triggers, agents, pipelines, and API</p>
+        <p className="text-sm text-zinc-400 mt-0.5">How to use Meshwork automation — triggers, agents, pipelines, and API</p>
       </div>
 
       {/* Tabs */}

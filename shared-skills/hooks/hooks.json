@@ -1,5 +1,5 @@
 {
-  "description": "OrchestraCode development workflow hooks - formatting, safety guards, and lifecycle events",
+  "description": "Meshwork development workflow hooks - formatting, safety guards, and lifecycle events",
   "hooks": {
     "PreToolUse": [
       {

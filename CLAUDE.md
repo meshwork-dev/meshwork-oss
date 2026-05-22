@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-Guidance for Claude Code working in a OrchestraCode-AutoDev deployment.
+Guidance for Claude Code working in a Meshwork-AutoDev deployment.
 
 ## Project Overview
 
-OrchestraCode-AutoDev is a job orchestration platform that connects Claude Code,
+Meshwork-AutoDev is a job orchestration platform that connects Claude Code,
 optional issue trackers (Jira), optional chat/notification channels
 (Telegram, Slack, Discord), and N8N workflows for automated software-development
 cycles. Tasks enter from webhooks, schedulers, or chat DMs; the Claude Runner

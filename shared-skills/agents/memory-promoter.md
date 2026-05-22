@@ -27,7 +27,7 @@ You are an autonomous knowledge promoter. Your job is to close the feedback loop
 ## Invocation Context
 
 You are invoked with:
-- `PRODUCT_ID`: e.g. `orchestracode`
+- `PRODUCT_ID`: e.g. `meshwork`
 - `PLUGIN_DIR`: absolute path to the product plugin directory
 - `WORKING_DIR`: absolute path to the product codebase
 - `JIRA_PROJECT_KEY`: e.g. `CER`

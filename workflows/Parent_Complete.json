@@ -76,7 +76,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://orchestracode.atlassian.net/rest/api/3/issue/{{ $json.parentKey }}?fields=subtasks,status",
+        "url": "=https://meshwork.atlassian.net/rest/api/3/issue/{{ $json.parentKey }}?fields=subtasks,status",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBasicAuth",
         "options": {}
@@ -146,7 +146,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://orchestracode.atlassian.net/rest/api/3/issue/{{ $json.parentKey }}/transitions",
+        "url": "=https://meshwork.atlassian.net/rest/api/3/issue/{{ $json.parentKey }}/transitions",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBasicAuth",
         "options": {}
@@ -182,7 +182,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://orchestracode.atlassian.net/rest/api/3/issue/{{ $json.parentKey }}/transitions",
+        "url": "=https://meshwork.atlassian.net/rest/api/3/issue/{{ $json.parentKey }}/transitions",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBasicAuth",
         "sendBody": true,
@@ -208,7 +208,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://orchestracode.atlassian.net/rest/api/3/issue/{{ $('Find Done Transition').first().json.parentKey }}/comment",
+        "url": "=https://meshwork.atlassian.net/rest/api/3/issue/{{ $('Find Done Transition').first().json.parentKey }}/comment",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBasicAuth",
         "sendBody": true,

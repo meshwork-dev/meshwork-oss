@@ -28,7 +28,7 @@ function iterEntries(collection) {
 }
 
 async function main() {
-  console.log("=== OrchestraCode Runner State Migration to PostgreSQL ===\n");
+  console.log("=== Meshwork Runner State Migration to PostgreSQL ===\n");
 
   // Step 1: Init DB (creates tables via db.js schema)
   console.log("Step 1: Initialising database schema...");

@@ -21,7 +21,7 @@ The following values must be available before executing any recipe. They come fr
 | `productId` | `myproduct` | Yes |
 | `productName` | `MyProduct` | Yes |
 | `workingDir` | `/srv/projects/myproduct` | Yes |
-| `pluginDir` | `/srv/orchestracode-autodev/myproduct-plugin/skills` | Yes |
+| `pluginDir` | `/srv/meshwork-autodev/myproduct-plugin/skills` | Yes |
 | `branding` | Colours, tone, voice, spelling, website, email (from Step 4) | Optional |
 | `domain` | Industry, frameworks, regulators (from Step 6) | Optional |
 

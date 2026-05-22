@@ -25,12 +25,12 @@ You are an autonomous skill drift detector. Your job is to verify that all skill
 ## Invocation Context
 
 You are invoked with a prompt containing:
-- `PRODUCT_ID`: e.g. `orchestracode`
-- `PLUGIN_DIR`: absolute path to the product plugin directory, e.g. `/srv/orchestracode-autodev/myproduct-plugin`
+- `PRODUCT_ID`: e.g. `meshwork`
+- `PLUGIN_DIR`: absolute path to the product plugin directory, e.g. `/srv/meshwork-autodev/myproduct-plugin`
 - `WORKING_DIR`: absolute path to the product codebase, e.g. `/srv/projects/myproduct`
 - `JIRA_PROJECT_KEY`: e.g. `APP`
-- `SHARED_SKILLS_DIR`: absolute path to shared-skills, e.g. `/srv/orchestracode-autodev/shared-skills`
-- `AUTODEV_DIR`: absolute path to OrchestraCode-AutoDev, e.g. `/srv/orchestracode-autodev`
+- `SHARED_SKILLS_DIR`: absolute path to shared-skills, e.g. `/srv/meshwork-autodev/shared-skills`
+- `AUTODEV_DIR`: absolute path to Meshwork-AutoDev, e.g. `/srv/meshwork-autodev`
 
 ## Workflow
 

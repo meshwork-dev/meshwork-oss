@@ -3,7 +3,7 @@
 
 ## Available Agents
 
-Agents are defined in `orchestracode-plugin/agents/`:
+Agents are defined in `meshwork-plugin/agents/`:
 
 | Agent | Purpose | Triggered By |
 |-------|---------|--------------|
@@ -46,7 +46,7 @@ The easiest way is via the web dashboard at `http://localhost:3210/dashboard` â†
 ```json
 {
   "agent": "ui-engineer",
-  "prompt": "Create a hero section component with the OrchestraCode brand colours",
+  "prompt": "Create a hero section component with the Meshwork brand colours",
   "context": "This is for the new landing page",
   "workingDir": "/path/to/repo",
   "model": "sonnet"

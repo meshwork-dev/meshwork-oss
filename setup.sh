@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# OrchestraCode-AutoDev setup — idempotent. Safe to re-run.
+# Meshwork-AutoDev setup — idempotent. Safe to re-run.
 #
 # First run  : full guided configuration.
 # Re-run     : detects existing .env and offers to reconfigure / keep / add product.
@@ -147,7 +147,7 @@ choose_mode() {
 print_banner() {
   printf "\n"
   printf "${BOLD}${CYAN}╔══════════════════════════════════════════════════════╗${RESET}\n"
-  printf "${BOLD}${CYAN}║         OrchestraCode-AutoDev Setup                      ║${RESET}\n"
+  printf "${BOLD}${CYAN}║         Meshwork-AutoDev Setup                      ║${RESET}\n"
   printf "${BOLD}${CYAN}║    AI-Powered SDLC Automation with Claude Code       ║${RESET}\n"
   printf "${BOLD}${CYAN}╚══════════════════════════════════════════════════════╝${RESET}\n"
   printf "\n"
@@ -396,7 +396,7 @@ setup_product() {
 {
   "id": "${id}",
   "name": "${PRODUCT_NAME}",
-  "description": "${PRODUCT_NAME} — managed by OrchestraCode-AutoDev",
+  "description": "${PRODUCT_NAME} — managed by Meshwork-AutoDev",
   "workingDir": "${PRODUCT_DIR}",
   "pluginDir": "${PRODUCT_PLUGIN_DIR}",
   "jira": {

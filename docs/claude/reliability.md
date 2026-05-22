@@ -1,5 +1,5 @@
 # Reliability & Infrastructure Reference
-> Referenced from CLAUDE.md. This file contains detailed documentation for reliability features, hooks, the OrchestraCode plugin, Claude execution internals, and key runner patterns.
+> Referenced from CLAUDE.md. This file contains detailed documentation for reliability features, hooks, the Meshwork plugin, Claude execution internals, and key runner patterns.
 
 ## Reliability
 
@@ -49,7 +49,7 @@ The plugin includes Claude Code hooks that run during agent sessions.
 
 | Hook | Purpose |
 |------|---------|
-| `on_stop.py` | Posts completion notification to `$ORCHESTRACODE_CALLBACK_URL` if set |
+| `on_stop.py` | Posts completion notification to `$MESHWORK_CALLBACK_URL` if set |
 
 ### Runner Quality Gates vs Plugin Hooks
 
@@ -59,14 +59,14 @@ These serve complementary purposes:
 
 Both remain active. Hooks provide real-time safety, quality gates provide final validation.
 
-## OrchestraCode Plugin
+## Meshwork Plugin
 
-All agents, skills, commands, and hooks are packaged as a Claude Code plugin in `orchestracode-plugin/`.
+All agents, skills, commands, and hooks are packaged as a Claude Code plugin in `meshwork-plugin/`.
 
 ### Plugin Structure
 
 ```
-orchestracode-plugin/
+meshwork-plugin/
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin manifest
 ├── .mcp.json                # MCP server references (Jira, Z.ai)
@@ -86,10 +86,10 @@ orchestracode-plugin/
 
 ```bash
 # Install in a project
-claude plugin install /path/to/orchestracode-plugin
+claude plugin install /path/to/meshwork-plugin
 
 # Or use directly
-claude --plugin-dir /path/to/orchestracode-plugin
+claude --plugin-dir /path/to/meshwork-plugin
 ```
 
 ### Development

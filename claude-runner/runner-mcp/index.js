@@ -55,7 +55,7 @@ server.registerTool("runner_list_jobs",
     description: "List jobs with optional filters. Use this to find recent failures or in-progress work.",
     inputSchema: {
       status:  z.enum(["running", "queued", "completed", "failed", "cancelled"]).optional(),
-      product: z.string().optional().describe("Product ID e.g. orchestracode"),
+      product: z.string().optional().describe("Product ID e.g. meshwork"),
       agent:   z.string().optional().describe("Agent name e.g. engineer-planner"),
       limit:   z.number().int().min(1).max(100).optional().describe("Max results, default 20"),
     },
@@ -134,7 +134,7 @@ server.registerTool("runner_list_products",
 server.registerTool("runner_reload_product",
   {
     description: "Hot-reload a product's config without restarting the runner",
-    inputSchema: { productId: z.string().describe("e.g. orchestracode, estateos, warranty-management") },
+    inputSchema: { productId: z.string().describe("e.g. meshwork, estateos, warranty-management") },
   },
   async ({ productId }) => ok(await post(`/api/products/${productId}/reload`)));
 

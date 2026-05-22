@@ -328,7 +328,7 @@
         "maxLength": 300,
         "includeQuestion": true,
         "avoidPhrases": ["Great post!", "Interesting!", "Thanks for sharing!", "Couldn't agree more!"],
-        "brandVoice": "OrchestraCode helps UK defence SMEs achieve Cyber Essentials and Def Stan compliance. We speak from practitioner experience, not vendor marketing."
+        "brandVoice": "Meshwork helps UK defence SMEs achieve Cyber Essentials and Def Stan compliance. We speak from practitioner experience, not vendor marketing."
       },
       "postTypes": {
         "insight": { "frequency": 1, "description": "Industry insight or opinion on compliance/cyber trend" },
@@ -549,7 +549,7 @@
   },
   "worktrees": {
     "enabled": true,
-    "baseDir": "~/orchestracode-worktrees",
+    "baseDir": "~/meshwork-worktrees",
     "maxPerRepo": 20,
     "pruneOnStartup": true
   },

@@ -24,7 +24,7 @@ You are an autonomous context bridge file cleaner. Context bridge files (`CTX-{i
 ## Invocation Context
 
 You are invoked with:
-- `PRODUCT_ID`: e.g. `orchestracode`
+- `PRODUCT_ID`: e.g. `meshwork`
 - `WORKING_DIR`: absolute path to the product codebase
 - `JIRA_PROJECT_KEY`: e.g. `CER`
 

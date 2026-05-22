@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "OrchestraCode Dashboard",
+  title: "Meshwork Dashboard",
   description: "Runner monitoring and management",
 };
 
