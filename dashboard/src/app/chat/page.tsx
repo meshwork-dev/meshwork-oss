@@ -22,7 +22,7 @@ const AGENTS = [
   { value: "architect", label: "Architect" },
   { value: "security-agent", label: "Security" },
   { value: "qa-agent", label: "QA" },
-  { value: "ask-dave-agent", label: "Ask Tom" },
+  { value: "ask-dave-agent", label: "Ask Dave" },
 ];
 
 const MODEL_COLORS: Record<string, string> = {
