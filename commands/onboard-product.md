@@ -312,7 +312,7 @@ Create the `<id>-plugin/` directory with the following structure:
 - **UI** (if frontend): `ui-engineer`
 - **Sales** (if enabled in Step 5): `sales-development`, `sales-researcher`, `sales-outreach`
 - **Marketing** (if enabled in Step 5): `marketing`, `creative-assets`
-- **Advanced** (optional): `ba-agent`, `architect-jets`, `ux-agent`, `qa-agent`, `ask-tom-agent`, `e2e-builder`, `uat-agent`
+- **Advanced** (optional): `ba-agent`, `architect`, `ux-agent`, `qa-agent`, `ask-dave-agent`, `e2e-builder`, `uat-agent`
 - **Documentation** (optional): `user-guide-agent`, `video-renderer` — navigates the live app to produce screenshot-based user guides and tutorial videos
 
 For each selected agent, read the Meshwork version from `meshwork-plugin/agents/<agent>.md` as a reference template. Generate a product-specific version by substituting:

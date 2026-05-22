@@ -21,10 +21,10 @@ Agents are defined in `meshwork-plugin/agents/`:
 | `sales-researcher` | Prospect research, enrichment, buying signals | Dispatched by `sales-development` |
 | `sales-outreach` | Cold emails, LinkedIn messages, follow-up sequences | Dispatched by `sales-development` |
 | `ba-agent` | Enriches Jira stories with structured requirements (ACs, NFRs) | `requirements` action, PM teammate |
-| `architect-jets` | System architecture design with ADRs | `architecture` action, pipeline phase |
+| `architect` | System architecture design with ADRs | `architecture` action, pipeline phase |
 | `ux-agent` | UX/UI design specifications and accessibility | `ux-design` action, pipeline phase |
 | `qa-agent` | Unified verification: code quality + Playwright browser tests + AC validation | `verify` pipeline phase (mandatory) |
-| `ask-tom-agent` | Elite problem-solving and troubleshooting | `troubleshoot` action, direct invocation |
+| `ask-dave-agent` | Elite problem-solving and troubleshooting | `troubleshoot` action, direct invocation |
 | `e2e-builder` | Full-lifecycle feature builder (requirements to tests) | `e2e-build` action, direct invocation |
 | `uat-agent` | (Legacy — merged into qa-agent) Standalone Playwright UAT if needed | Direct invocation only |
 
@@ -115,13 +115,13 @@ curl -H "x-runner-secret: $SECRET" http://localhost:3210/jobs/<jobId>/output
 | `[AUTO-STANDUP]` | sprint-reporter | Daily standup summary |
 | `[AUTO-COMPLETE]` | workflow | Parent auto-closed (all subtasks done) |
 | `[AUTO-REQUIREMENTS]` | ba-agent | Story enriched with structured requirements |
-| `[AUTO-ARCHITECTURE]` | architect-jets | Architecture design complete |
+| `[AUTO-ARCHITECTURE]` | architect | Architecture design complete |
 | `[AUTO-UX]` | ux-agent | UX specification complete |
 | `[AUTO-VERIFY]` | qa-agent | Verification passed (code quality + browser tests) |
 | `[AUTO-VERIFY-FAIL]` | qa-agent | Verification failed |
 | `[AUTO-SECURITY-REVIEW]` | security-agent | Security review approved |
 | `[AUTO-SECURITY-BLOCKED]` | security-agent | Security review blocked |
-| `[AUTO-TROUBLESHOOT]` | ask-tom-agent | Problem diagnosed and resolved |
+| `[AUTO-TROUBLESHOOT]` | ask-dave-agent | Problem diagnosed and resolved |
 | `[AUTO-E2E-COMPLETE]` | e2e-builder | End-to-end build complete |
 
 ## Subtask-Based Workflow (Primary Pattern)
@@ -159,7 +159,7 @@ Agents create Jira subtasks to break down and delegate work. This replaces the l
 - Parallel execution for non-conflicting file sets
 - Recursive decomposition (max 3 levels)
 
-**Gate labels** — applied per-subtask by the creating agent (planner/PM). The sprint runner dispatches gate agents (`ba-agent`, `architect-jets`, `ux-agent`) on subtasks that have these labels before implementation. Do NOT put gate labels on parent stories.
+**Gate labels** — applied per-subtask by the creating agent (planner/PM). The sprint runner dispatches gate agents (`ba-agent`, `architect`, `ux-agent`) on subtasks that have these labels before implementation. Do NOT put gate labels on parent stories.
 
 **Agent labels:**
 | Label | Agent |
@@ -175,11 +175,11 @@ Agents create Jira subtasks to break down and delegate work. This replaces the l
 | `agent:sales-research` | sales-researcher |
 | `agent:sales-outreach` | sales-outreach |
 | `agent:ba` | ba-agent |
-| `agent:architect` | architect-jets |
+| `agent:architect` | architect |
 | `agent:ux` | ux-agent |
 | `agent:qa` | qa-agent (unified verify) |
 | `agent:security-review` | security-agent |
-| `agent:troubleshoot` | ask-tom-agent |
+| `agent:troubleshoot` | ask-dave-agent |
 | `agent:e2e-builder` | e2e-builder |
 
 **Delegation matrix (who can create subtasks for whom):**
@@ -415,10 +415,10 @@ All engineering agents run on Claude. Only `creative-assets` uses Z.ai for image
 | `sales-researcher` | Claude | **Sonnet 4.6** | Prospect research, enrichment |
 | `sales-outreach` | Claude | **Sonnet 4.6** | Outreach content drafting |
 | `ba-agent` | Claude | **Sonnet 4.6** | Story enrichment with structured requirements |
-| `architect-jets` | Claude | **Opus 4.6** | System architecture design |
+| `architect` | Claude | **Opus 4.6** | System architecture design |
 | `ux-agent` | Claude | **Sonnet 4.6** | UX/UI design specifications |
 | `qa-agent` | Claude | **Sonnet 4.6** | Unified verification (code quality + browser tests) |
-| `ask-tom-agent` | Claude | **Opus 4.6** | Problem-solving and troubleshooting |
+| `ask-dave-agent` | Claude | **Opus 4.6** | Problem-solving and troubleshooting |
 | `e2e-builder` | Claude | **Sonnet 4.6** | Full-lifecycle feature builder |
 | Chat mode (no agent) | Claude | **Haiku** | Quick responses |
 | Delivery mode (no agent) | Claude | **Sonnet** | Default for Jira work |

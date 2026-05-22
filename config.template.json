@@ -77,11 +77,11 @@
       "sales-researcher": "sonnet",
       "sales-outreach": "sonnet",
       "ba-agent": "opus",
-      "architect-jets": "opus",
+      "architect": "opus",
       "ux-agent": "sonnet",
       "qa-agent": "sonnet",
       "security-agent": "sonnet",
-      "ask-tom-agent": "opus",
+      "ask-dave-agent": "opus",
       "e2e-builder": "opus",
       "uat-agent": "sonnet",
       "user-guide-agent": "sonnet",
@@ -89,10 +89,10 @@
     },
     "agentEffort": {
       "engineer-planner": "xhigh",
-      "architect-jets": "xhigh",
+      "architect": "xhigh",
       "product-manager": "xhigh",
       "engineer-reviewer": "xhigh",
-      "ask-tom-agent": "xhigh",
+      "ask-dave-agent": "xhigh",
       "e2e-builder": "xhigh",
       "engineer-implementer": "high"
     },
@@ -150,10 +150,10 @@
     "sales-researcher": ["memory", "runner-admin", "attio-mcp", "fetch"],
     "sales-outreach": ["memory", "runner-admin", "attio-mcp"],
     "ba-agent": ["memory", "runner-admin", "context7"],
-    "architect-jets": ["memory", "runner-admin", "context7", "sequential-thinking"],
+    "architect": ["memory", "runner-admin", "context7", "sequential-thinking"],
     "ux-agent": ["memory", "runner-admin", "context7"],
     "qa-agent": ["memory", "runner-admin", "playwright", "github"],
-    "ask-tom-agent": ["memory", "runner-admin", "sequential-thinking", "github"],
+    "ask-dave-agent": ["memory", "runner-admin", "sequential-thinking", "github"],
     "e2e-builder": ["memory", "runner-admin", "github", "context7", "playwright"],
     "uat-agent": ["memory", "runner-admin", "playwright", "github"]
   },
@@ -610,7 +610,7 @@
         "name": "Weekly Planning",
         "cron": "0 10 * * 1",
         "topic": "Weekly planning: Review sprint progress, prioritize upcoming work, identify risks and dependencies.",
-        "agents": ["product-manager", "engineer-planner", "architect-jets", "engineer-implementer", "engineer-reviewer", "security-agent", "qa-agent"],
+        "agents": ["product-manager", "engineer-planner", "architect", "engineer-implementer", "engineer-reviewer", "security-agent", "qa-agent"],
         "maxRounds": 3,
         "telegramChat": "engineering"
       }
@@ -630,7 +630,7 @@
     "defaultTelegramChatId": "__TELEGRAM_ADMIN_CHAT_ID__",
     "actionItemTiers": {
       "storyCreators": ["ba-agent", "product-manager"],
-      "enrichers": ["ux-agent", "engineer-planner", "architect-jets", "security-agent", "qa-agent", "ui-engineer", "ask-tom-agent"]
+      "enrichers": ["ux-agent", "engineer-planner", "architect", "security-agent", "qa-agent", "ui-engineer", "ask-dave-agent"]
     }
   },
   "agentLabels": {
@@ -649,11 +649,11 @@
     "agent:sales-research": "sales-researcher",
     "agent:sales-outreach": "sales-outreach",
     "agent:ba": "ba-agent",
-    "agent:architect": "architect-jets",
+    "agent:architect": "architect",
     "agent:ux": "ux-agent",
     "agent:qa": "qa-agent",
     "agent:security-review": "security-agent",
-    "agent:troubleshoot": "ask-tom-agent",
+    "agent:troubleshoot": "ask-dave-agent",
     "agent:e2e-builder": "e2e-builder",
     "agent:uat": "uat-agent",
     "agent:user-guide": "user-guide-agent",
@@ -664,7 +664,7 @@
     "agent:product-manager": "product-manager",
     "agent:ui-engineer": "ui-engineer",
     "agent:ba-agent": "ba-agent",
-    "agent:architect-jets": "architect-jets",
+    "agent:architect": "architect",
     "agent:ux-agent": "ux-agent",
     "agent:qa-agent": "qa-agent",
     "agent:security-agent": "security-agent",
@@ -672,7 +672,7 @@
     "agent:sales-development": "sales-development",
     "agent:sales-researcher": "sales-researcher",
     "agent:sales-outreach": "sales-outreach",
-    "agent:ask-tom-agent": "ask-tom-agent",
+    "agent:ask-dave-agent": "ask-dave-agent",
     "agent:uat-agent": "uat-agent",
     "agent:user-guide-agent": "user-guide-agent"
   },
@@ -705,11 +705,11 @@
     "model": "qwen/qwen3-coder-30b",
     "agents": [
       "engineer-planner",
-      "architect-jets",
+      "architect",
       "ba-agent",
       "bug-triage",
       "security-agent",
-      "ask-tom-agent",
+      "ask-dave-agent",
       "product-manager",
       "sprint-reporter"
     ],

@@ -19,10 +19,10 @@ const AGENTS = [
   { value: "engineer-reviewer", label: "Reviewer" },
   { value: "product-manager", label: "PM" },
   { value: "ui-engineer", label: "UI Engineer" },
-  { value: "architect-jets", label: "Architect" },
+  { value: "architect", label: "Architect" },
   { value: "security-agent", label: "Security" },
   { value: "qa-agent", label: "QA" },
-  { value: "ask-tom-agent", label: "Ask Tom" },
+  { value: "ask-dave-agent", label: "Ask Tom" },
 ];
 
 const MODEL_COLORS: Record<string, string> = {

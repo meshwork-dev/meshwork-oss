@@ -279,9 +279,9 @@ function loadConfig() {
       "agent:security-agent": "security-agent",
       "agent:qa-agent": "qa-agent",
       "agent:ba-agent": "ba-agent",
-      "agent:architect-jets": "architect-jets",
+      "agent:architect": "architect",
       "agent:ux-agent": "ux-agent",
-      "agent:ask-tom-agent": "ask-tom-agent",
+      "agent:ask-dave-agent": "ask-dave-agent",
       "agent:e2e-builder": "e2e-builder",
       "agent:uat-agent": "uat-agent",
       "agent:sales-development": "sales-development",
@@ -294,8 +294,8 @@ function loadConfig() {
       "agent:ba": "ba-agent",
       "agent:ux": "ux-agent",
       "agent:qa": "qa-agent",
-      "agent:architect": "architect-jets",
-      "agent:ask-tom": "ask-tom-agent",
+      "agent:architect": "architect",
+      "agent:ask-dave": "ask-dave-agent",
       "agent:uat": "uat-agent",
       "agent:e2e": "e2e-builder"
     },
@@ -1649,14 +1649,14 @@ const AGENT_ROLE_DESCRIPTIONS = {
   "engineer-planner": "Technical architecture, implementation planning, codebase structure, and technical feasibility",
   "engineer-implementer": "Hands-on coding, build systems, testing, and practical implementation concerns",
   "engineer-reviewer": "Code quality, patterns, security vulnerabilities, and engineering standards",
-  "architect-jets": "System architecture, ADRs, scalability, integration patterns, and technical debt",
+  "architect": "System architecture, ADRs, scalability, integration patterns, and technical debt",
   "security-agent": "Security threats, OWASP risks, authentication, authorization, and compliance",
   "qa-agent": "Unified verification: unit/integration tests, type-check, lint, acceptance criteria, Playwright browser tests, and regression",
   "ux-agent": "User experience, accessibility, interaction design, and UI patterns",
   "ba-agent": "Business requirements, acceptance criteria, stakeholder needs, and process flows",
   "marketing": "Market positioning, content strategy, competitive landscape, and messaging",
   "sales-development": "Customer pain points, sales pipeline, prospect feedback, and market demand",
-  "ask-tom-agent": "Root cause analysis, debugging complex issues, and creative problem-solving",
+  "ask-dave-agent": "Root cause analysis, debugging complex issues, and creative problem-solving",
   "bug-triage": "Bug analysis, severity assessment, and reproduction steps",
   "sprint-reporter": "Team velocity, sprint metrics, and delivery performance",
 };
@@ -3244,7 +3244,7 @@ async function dispatchMeetingActions(meeting) {
   // tier 1 via blockedByJobIds so they only run after stories exist.
   const tierConfig = config.meetings?.actionItemTiers || {};
   const storyCreators = new Set(tierConfig.storyCreators || ["ba-agent", "product-manager"]);
-  const enrichers = new Set(tierConfig.enrichers || ["ux-agent", "engineer-planner", "architect-jets", "security-agent", "qa-agent", "ui-engineer", "ask-tom-agent"]);
+  const enrichers = new Set(tierConfig.enrichers || ["ux-agent", "engineer-planner", "architect", "security-agent", "qa-agent", "ui-engineer", "ask-dave-agent"]);
   const tierOf = (owner) => {
     if (storyCreators.has(owner)) return 1;
     if (enrichers.has(owner)) return 2;
@@ -5883,11 +5883,11 @@ async function createPipelineFailureSubtask(pipeline, phase) {
     const errorSummary = (phase.error || "Phase failed").substring(0, 140);
     const summary = `[RCA] ${pipeline.issueKey} — ${phase.name} exhausted: ${errorSummary}`.substring(0, 255);
 
-    // Route exhausted-pipeline failures to ask-tom for root-cause analysis instead of
-    // re-spawning the same agent. Ask-tom investigates, attaches findings, and only then
+    // Route exhausted-pipeline failures to ask-dave for root-cause analysis instead of
+    // re-spawning the same agent. ask-dave investigates, attaches findings, and only then
     // delegates to an implementer (or recommends scope reduction / deferral) with a
     // narrow, evidenced plan.
-    const agentLabel = "agent:ask-tom-agent";
+    const agentLabel = "agent:ask-dave-agent";
     const failedAgent = phase.agent || "unknown";
     const fixLoopAttempts = phase.fixLoopAttempts || 0;
     const verifyLoopAttempts = pipeline.verifyFixLoopAttempts || 0;
@@ -5900,7 +5900,7 @@ async function createPipelineFailureSubtask(pipeline, phase) {
       `Verify-fix-loop attempts: ${verifyLoopAttempts}`,
       `Last error: ${phase.error || "Unknown"}`,
       ``,
-      `## Your job (ask-tom-agent)`,
+      `## Your job (ask-dave-agent)`,
       `Do NOT just re-run the failed agent. Treat this as a root-cause problem.`,
       `1. Read the parent issue ${pipeline.issueKey} and the prior pipeline jobs/comments to understand what was attempted and why each attempt failed.`,
       `2. Identify the actual root cause — distinguish between (a) a narrow bug in the change, (b) scope creep that broke unrelated code, (c) a pre-existing flaky/broken test, (d) the spec being unimplementable as stated.`,
@@ -8035,7 +8035,7 @@ async function tickSprintRunner() {
         const GATE_LABEL_TO_AGENT = {
           "needs-requirements": "ba-agent",
           "needs-ux-design": "ux-agent",
-          "needs-architecture": "architect-jets",
+          "needs-architecture": "architect",
         };
         const isSubtask = issueType === "sub-task" || issueType === "subtask";
         const gateLabels = labels.filter(l => GATE_LABEL_TO_AGENT[l]);
@@ -10439,10 +10439,10 @@ function buildConsultSectionForChatAgent(job) {
     "- sales-development: Sales strategy, pipeline, ICP",
     "- sales-researcher: Prospect research, market intelligence",
     "- ba-agent: Requirements analysis, story enrichment",
-    "- architect-jets: System architecture, design patterns",
+    "- architect: System architecture, design patterns",
     "- sprint-reporter: Sprint metrics, velocity data",
     "- qa-agent: Testing strategy, quality gates",
-    "- ask-tom-agent: Complex troubleshooting, root cause analysis",
+    "- ask-dave-agent: Complex troubleshooting, root cause analysis",
     "",
     "To consult an agent, use the Bash tool:",
     `curl -s -X POST http://localhost:${config.port || 3210}/internal/consult \\`,
@@ -10472,10 +10472,10 @@ function buildConsultSectionForAgentPrompt(job, agentName) {
     "- sales-development: Sales strategy, pipeline, ICP",
     "- sales-researcher: Prospect research, market intelligence",
     "- ba-agent: Requirements analysis, story enrichment",
-    "- architect-jets: System architecture, design patterns",
+    "- architect: System architecture, design patterns",
     "- sprint-reporter: Sprint metrics, velocity data",
     "- qa-agent: Testing strategy, quality gates",
-    "- ask-tom-agent: Complex troubleshooting, root cause analysis",
+    "- ask-dave-agent: Complex troubleshooting, root cause analysis",
     "",
     "To consult an agent, use the Bash tool:",
     `curl -s -X POST http://localhost:${config.port || 3210}/internal/consult \\`,

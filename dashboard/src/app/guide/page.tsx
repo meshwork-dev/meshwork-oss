@@ -50,7 +50,7 @@ function QuickStartSection() {
             { title: "Quick code change (no ticket)", desc: "Dashboard → Agents tab → pick engineer-implementer → describe what you need.", color: "blue" },
             { title: "Security review", desc: "Run via Dashboard with security-agent, or add agent:security-review label to a Jira subtask.", color: "amber" },
             { title: "Marketing content", desc: "Create a Jira issue with [Marketing] prefix in the summary.", color: "purple" },
-            { title: "Ask about the codebase", desc: "Dashboard → Agents → ask-tom-agent → ask your question.", color: "rose" },
+            { title: "Ask about the codebase", desc: "Dashboard → Agents → ask-dave-agent → ask your question.", color: "rose" },
           ].map((item) => (
             <div key={item.title} className="flex gap-3 items-start">
               <span className={`mt-1 w-2 h-2 rounded-full bg-${item.color}-400 shrink-0`} />
@@ -142,10 +142,10 @@ function AgentsSection() {
     { name: "sales-researcher", purpose: "Prospect research & enrichment", label: "agent:sales-research", model: "Sonnet" },
     { name: "sales-outreach", purpose: "Cold emails, LinkedIn messages", label: "agent:sales-outreach", model: "Sonnet" },
     { name: "ba-agent", purpose: "Story enrichment, acceptance criteria", label: "agent:ba", model: "Sonnet" },
-    { name: "architect-jets", purpose: "System architecture, ADRs", label: "agent:architect", model: "Opus" },
+    { name: "architect", purpose: "System architecture, ADRs", label: "agent:architect", model: "Opus" },
     { name: "ux-agent", purpose: "UX/UI design specifications", label: "agent:ux", model: "Sonnet" },
     { name: "qa-agent", purpose: "Integration/E2E test validation", label: "agent:qa", model: "Sonnet" },
-    { name: "ask-tom-agent", purpose: "Troubleshooting, root cause analysis", label: "agent:troubleshoot", model: "Opus" },
+    { name: "ask-dave-agent", purpose: "Troubleshooting, root cause analysis", label: "agent:troubleshoot", model: "Opus" },
     { name: "e2e-builder", purpose: "Full lifecycle: requirements to tests", label: "agent:e2e-builder", model: "Sonnet" },
   ];
 
@@ -222,7 +222,7 @@ function PipelinesSection() {
             {
               name: "new-feature",
               trigger: "Label: needs-requirements or needs-ux-design",
-              phases: ["Requirements (ba-agent)", "Architecture (architect-jets)", "UX Design (ux-agent, optional)", "Implementation (engineer-planner + team)", "Security Review (security-agent, optional)", "QA (qa-agent)", "Acceptance (product-manager)"],
+              phases: ["Requirements (ba-agent)", "Architecture (architect)", "UX Design (ux-agent, optional)", "Implementation (engineer-planner + team)", "Security Review (security-agent, optional)", "QA (qa-agent)", "Acceptance (product-manager)"],
               color: "teal",
             },
             {

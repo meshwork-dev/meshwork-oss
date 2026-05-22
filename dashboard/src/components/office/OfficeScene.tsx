@@ -100,7 +100,7 @@ const AGENT_TEAM: Record<string, TeamId> = {
   "engineer-implementer": "engineering",
   "engineer-reviewer": "engineering",
   "ui-engineer": "engineering",
-  "architect-jets": "engineering",
+  "architect": "engineering",
   "product-manager": "product",
   "ba-agent": "product",
   "sprint-reporter": "product",
@@ -113,7 +113,7 @@ const AGENT_TEAM: Record<string, TeamId> = {
   "qa-agent": "sdlc",
   "uat-agent": "sdlc",
   "security-agent": "sdlc",
-  "ask-tom-agent": "sdlc",
+  "ask-dave-agent": "sdlc",
   "e2e-builder": "sdlc",
   "ux-agent": "sdlc",
 };

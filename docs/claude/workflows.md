@@ -63,7 +63,7 @@
 ### Bug Auto-Routing
 Bugs identified by agents (during meetings or reviews) are auto-routed:
 - Jira Webhook Listener routes `agent-created-bug` + `agent:engineer-planner` labels directly to `bug-fix` pipeline (skips triage)
-- `engineer-planner` and `architect-jets` add these labels when creating bugs
+- `engineer-planner` and `architect` add these labels when creating bugs
 - `bug-triage` adds `agent:engineer-planner` label after triaging critical/major bugs
 
 ## Jira Automation Rules (`JiraAutomation/`)
@@ -142,5 +142,5 @@ The runner includes a scheduler for deferred jobs and meetings. Items are persis
 - [ ] [task] — Owner: [agent-name] — Priority: High — Schedule: tomorrow 14:00
 
 ## Follow-Up Meetings
-- Topic: [what to discuss] — Agents: engineer-planner, architect-jets — Schedule: next Monday 09:00
+- Topic: [what to discuss] — Agents: engineer-planner, architect — Schedule: next Monday 09:00
 ```

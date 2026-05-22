@@ -137,10 +137,10 @@ with both plugin directories so agents see shared + product context.
 | `marketing` | Marketing content drafts |
 | `sprint-reporter` | Sprint velocity reports, daily standup summaries |
 | `ba-agent` | Enriches stories with structured requirements |
-| `architect-jets` | System architecture design with ADRs |
+| `architect` | System architecture design with ADRs |
 | `ux-agent` | UX/UI design specifications and accessibility |
 | `qa-agent` | Integration/E2E testing, acceptance validation |
-| `ask-tom-agent` | Elite problem-solving and troubleshooting |
+| `ask-dave-agent` | Elite problem-solving and troubleshooting |
 | `e2e-builder` | Full-lifecycle feature builder |
 | `uat-agent` | Playwright browser UAT |
 

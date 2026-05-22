@@ -48,7 +48,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const kpi = $json || {};\nconst date = new Date().toISOString().split('T')[0];\n\nlet topic = `Weekly Retrospective ${date}: `;\ntopic += `This week we shipped ${kpi.featuresShipped || '?'} features. `;\ntopic += `Pipeline completion: ${kpi.pipelineCompletionRate || '?'}%. `;\ntopic += `QG first-pass: ${kpi.firstPassQualityGateRate || '?'}%. `;\ntopic += `Rework rate: ${kpi.reworkRate || '?'}%. `;\ntopic += `Cost: $${kpi.weeklySpend || '?'}. `;\ntopic += `What went well? What should we improve? What are the priorities for next week?`;\n\nreturn [{ json: { \n  topic, \n  agents: ['product-manager', 'engineer-planner', 'qa-agent', 'architect-jets'],\n  maxRounds: 2,\n  autoDiscuss: true,\n  callbackUrl: '{{N8N_PUBLIC_URL}}/webhook/meeting/callback',\n  telegram: { chatId: '-5037701631' },\n  date\n} }];"
+        "jsCode": "const kpi = $json || {};\nconst date = new Date().toISOString().split('T')[0];\n\nlet topic = `Weekly Retrospective ${date}: `;\ntopic += `This week we shipped ${kpi.featuresShipped || '?'} features. `;\ntopic += `Pipeline completion: ${kpi.pipelineCompletionRate || '?'}%. `;\ntopic += `QG first-pass: ${kpi.firstPassQualityGateRate || '?'}%. `;\ntopic += `Rework rate: ${kpi.reworkRate || '?'}%. `;\ntopic += `Cost: $${kpi.weeklySpend || '?'}. `;\ntopic += `What went well? What should we improve? What are the priorities for next week?`;\n\nreturn [{ json: { \n  topic, \n  agents: ['product-manager', 'engineer-planner', 'qa-agent', 'architect'],\n  maxRounds: 2,\n  autoDiscuss: true,\n  callbackUrl: '{{N8N_PUBLIC_URL}}/webhook/meeting/callback',\n  telegram: { chatId: '-5037701631' },\n  date\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
