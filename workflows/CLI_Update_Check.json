@@ -1,0 +1,89 @@
+{
+  "name": "CLI Update Check Schedule",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "cliupd-001",
+      "name": "Daily 8am"
+    },
+    {
+      "parameters": {
+        "jsCode": "const today = new Date().toISOString().split('T')[0];\n\nconst prompt = `You are the daily Claude Code CLI update checker for the Meshwork platform. This is a READ-ONLY research task — do not modify, create, or commit any files.\\n\\nSteps:\\n1. Run \\`claude --version\\` to get the DEPLOYED version. You are running inside the runner container, so your own CLI version IS the platform's pinned version.\\n2. Run \\`npm view @anthropic-ai/claude-code version\\` to get the LATEST published version.\\n3. If they match, reply with exactly one line: \\\"✅ Claude CLI up to date (v<version>)\\\" and stop.\\n4. If a newer version exists, fetch the changelog from https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md (curl is available) and extract ONLY the entries between the deployed version (exclusive) and the latest version (inclusive).\\n5. Write a Telegram-friendly briefing (plain text, under 3000 chars):\\n   - Header: \\\"🔔 Claude CLI update available: v<deployed> → v<latest>\\\"\\n   - What changed, grouped as: New features / Fixes / Breaking or behavioural changes\\n   - For each notable change, one line on how it could benefit THIS platform specifically. Platform context: an Express job runner spawns \\`claude -p --output-format stream-json --verbose --dangerously-skip-permissions\\` as subprocesses for autonomous Jira-driven SDLC pipelines; it parses stream-json events, uses subagents, MCP servers, plugin dirs, hooks, and --fallback-model chains; long-term goals include native sandboxing to retire --dangerously-skip-permissions, tool deferral, and structured outputs. Flag anything that could BREAK stream-json parsing or flag semantics.\\n   - End with one recommendation: \\\"Bump now\\\", \\\"Bump after canary test\\\", or \\\"Skip — no platform-relevant changes\\\", with one sentence of reasoning.\\n\\nYour final reply is sent directly via Telegram, so output only the briefing itself — no preamble.`;\n\nreturn [{\n  json: {\n    date: today,\n    idempotencyKey: `cli-update-check:${today}`,\n    prompt\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0],
+      "id": "cliupd-002",
+      "name": "Prepare Check Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{RUNNER_INTERNAL_URL}}/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"agent\": \"sprint-reporter\",\n  \"model\": \"sonnet\",\n  \"issueKey\": \"CLI-UPDATE-CHECK\",\n  \"summary\": \"Daily Claude CLI update check\",\n  \"description\": {{ JSON.stringify($json.prompt) }},\n  \"workingDir\": \"{{DEFAULT_WORKING_DIR}}\",\n  \"callbackUrl\": \"{{N8N_PUBLIC_URL}}/webhook/runner/callback\",\n  \"telegram\": {\n    \"chatId\": \"{{TELEGRAM_ADMIN_CHAT_ID}}\"\n  },\n  \"source\": {\n    \"workflow\": \"CLI Update Check Schedule\",\n    \"triggeredBy\": \"schedule\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [440, 0],
+      "id": "cliupd-003",
+      "name": "Dispatch CLI Check",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 8am": {
+      "main": [
+        [
+          {
+            "node": "Prepare Check Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Check Request": {
+      "main": [
+        [
+          {
+            "node": "Dispatch CLI Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

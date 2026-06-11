@@ -10,8 +10,8 @@ import { useSSE } from "@/lib/sse";
 import { useState } from "react";
 import type { JobsQueryParams } from "@/lib/types";
 
-function JobsPage({ baseUrl, secret }: { baseUrl: string; secret: string }) {
-  useSSE(baseUrl, secret); // Wire SSE for real-time updates via SWR mutation
+function JobsPage() {
+  useSSE(); // Wire SSE for real-time updates via SWR mutation
   const [params, setParams] = useState<JobsQueryParams>({ page: 1, limit: 50 });
   const { data, isLoading } = useJobs(params);
 
@@ -35,13 +35,13 @@ function JobsPage({ baseUrl, secret }: { baseUrl: string; secret: string }) {
 export default function Page() {
   return (
     <AuthGate>
-      {({ baseUrl, secret }) => (
+      {({ baseUrl }) => (
         <div className="flex min-h-screen">
           <Sidebar />
           <div className="flex-1 flex flex-col">
             <Header baseUrl={baseUrl} />
             <main className="flex-1 p-2 sm:p-4 md:p-6">
-              <JobsPage baseUrl={baseUrl} secret={secret} />
+              <JobsPage />
             </main>
           </div>
         </div>

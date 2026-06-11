@@ -196,11 +196,11 @@ gather_config() {
   fi
 
   header "External Webhook Access (optional)"
-  NGROK_ENABLED=false NGROK_AUTHTOKEN="" NGROK_HOSTNAME=""
+  NGROK_ENABLED=false NGROK_AUTHTOKEN="" NGROK_DOMAIN=""
   if prompt_yn "Expose N8N webhooks publicly via ngrok?"; then
     NGROK_ENABLED=true
     NGROK_AUTHTOKEN="$(prompt_secret "ngrok authtoken")"
-    NGROK_HOSTNAME="$(prompt_value "ngrok hostname (e.g. yourapp.ngrok.app)")"
+    NGROK_DOMAIN="$(prompt_value "ngrok domain (e.g. yourapp.ngrok.app)")"
   fi
 
   header "Outgoing Notifications (optional)"
@@ -230,13 +230,13 @@ load_existing_config() {
   JIRA_API_TOKEN="$(env_get JIRA_API_TOKEN)"
   TELEGRAM_BOT_TOKEN="$(env_get TELEGRAM_BOT_TOKEN)"
   TELEGRAM_CHAT_NOTIFICATIONS="$(env_get TELEGRAM_CHAT_NOTIFICATIONS)"
-  NGROK_HOSTNAME="$(env_get NGROK_DOMAIN)"
+  NGROK_DOMAIN="$(env_get NGROK_DOMAIN)"
   POSTGRES_MODE="$(env_get POSTGRES_MODE)"
   POSTGRES_MODE="${POSTGRES_MODE:-bundled}"
   PROJECT_DIR="$(env_get PROJECT_DIR)"
   JIRA_ENABLED=false; [[ -n "$JIRA_DOMAIN" ]] && JIRA_ENABLED=true
   TELEGRAM_ENABLED=false; [[ -n "$TELEGRAM_BOT_TOKEN" ]] && TELEGRAM_ENABLED=true
-  NGROK_ENABLED=false; [[ -n "$NGROK_HOSTNAME" ]] && NGROK_ENABLED=true
+  NGROK_ENABLED=false; [[ -n "$NGROK_DOMAIN" ]] && NGROK_ENABLED=true
   N8N_ENABLED=false
   if [[ "$JIRA_ENABLED" == "true" ]] || [[ "$NGROK_ENABLED" == "true" ]]; then
     N8N_ENABLED=true
@@ -267,13 +267,21 @@ generate_env() {
   env_set RUNNER_DB_PASSWORD      "$RUNNER_DB_PASSWORD"
   env_set PROJECT_DIR             "${PRODUCT_DIR:-${PROJECT_DIR:-}}"
 
+  # N8N secrets — generated once, preserved on re-runs (idempotent).
+  if [[ -z "$(env_get N8N_BASIC_AUTH_PASSWORD)" ]]; then
+    env_set N8N_BASIC_AUTH_PASSWORD "$(openssl rand -hex 16)"
+  fi
+  if [[ -z "$(env_get N8N_DB_PASSWORD)" ]]; then
+    env_set N8N_DB_PASSWORD "$(openssl rand -hex 16)"
+  fi
+
   [[ -n "${JIRA_DOMAIN:-}" ]]                && env_set JIRA_DOMAIN                "$JIRA_DOMAIN"
   [[ -n "${JIRA_EMAIL:-}" ]]                 && env_set JIRA_EMAIL                 "$JIRA_EMAIL"
   [[ -n "${JIRA_API_TOKEN:-}" ]]             && env_set JIRA_API_TOKEN             "$JIRA_API_TOKEN"
   [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]         && env_set TELEGRAM_BOT_TOKEN         "$TELEGRAM_BOT_TOKEN"
   [[ -n "${TELEGRAM_CHAT_NOTIFICATIONS:-}" ]]&& env_set TELEGRAM_CHAT_NOTIFICATIONS "$TELEGRAM_CHAT_NOTIFICATIONS"
   [[ -n "${NGROK_AUTHTOKEN:-}" ]]            && env_set NGROK_AUTHTOKEN            "$NGROK_AUTHTOKEN"
-  [[ -n "${NGROK_HOSTNAME:-}" ]]             && env_set NGROK_DOMAIN               "$NGROK_HOSTNAME"
+  [[ -n "${NGROK_DOMAIN:-}" ]]               && env_set NGROK_DOMAIN               "$NGROK_DOMAIN"
   [[ -n "${NOTIFICATION_WEBHOOK_URL:-}" ]]   && env_set NOTIFICATION_WEBHOOK_URL   "$NOTIFICATION_WEBHOOK_URL"
 
   success ".env written"
@@ -293,8 +301,8 @@ generate_config() {
   fi
 
   local callback_url=""
-  if [[ "$NGROK_ENABLED" == "true" && -n "$NGROK_HOSTNAME" ]]; then
-    callback_url="https://${NGROK_HOSTNAME}/webhook/runner/callback"
+  if [[ "$NGROK_ENABLED" == "true" && -n "$NGROK_DOMAIN" ]]; then
+    callback_url="https://${NGROK_DOMAIN}/webhook/runner/callback"
   fi
 
   jq \
@@ -302,7 +310,7 @@ generate_config() {
     --arg callback_url "$callback_url" \
     --arg jira_host "${JIRA_DOMAIN#https://}" \
     --arg project_key "${PRODUCT_PREFIX:-PRJ}" \
-    --arg n8n_url "${NGROK_HOSTNAME:+https://${NGROK_HOSTNAME}}" \
+    --arg n8n_url "${NGROK_DOMAIN:+https://${NGROK_DOMAIN}}" \
     '
     walk(
       if type == "string" then
@@ -329,7 +337,7 @@ generate_config() {
       --arg callback_url "$callback_url" \
       --arg jira_host "${JIRA_DOMAIN#https://}" \
       --arg project_key "${PRODUCT_PREFIX:-PRJ}" \
-      --arg n8n_url "${NGROK_HOSTNAME:+https://${NGROK_HOSTNAME}}" \
+      --arg n8n_url "${NGROK_DOMAIN:+https://${NGROK_DOMAIN}}" \
       '
       walk(
         if type == "string" then

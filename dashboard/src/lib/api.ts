@@ -7,6 +7,7 @@ import type {
   ScheduledItem, SkillUsageMap,
   Issue, IssueSearchResult, IssueDetail, IssueTransition, Notification,
 } from "./types";
+import { clearAuth } from "./auth";
 
 // Team config known from runner config.json — enriches agents client-side
 const TEAM_CONFIG: Record<string, { teammates: string[]; disallowedTools?: string[] }> = {
@@ -49,25 +50,52 @@ class APIError extends Error {
   }
 }
 
+/**
+ * All runner traffic goes through the Next.js server-side proxy, which holds
+ * the runner secret and authenticates the browser via httpOnly session cookie.
+ */
+export const API_BASE = "/api/runner";
+
+/** Session expired/invalid: clear auth state and force re-login. */
+function handleUnauthorized() {
+  clearAuth();
+  if (typeof window !== "undefined") {
+    window.location.reload();
+  }
+}
+
+/**
+ * Thin fetch wrapper for ad-hoc runner calls outside RunnerAPI. Prefixes the
+ * proxy base path and forces re-login on 401.
+ */
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(`${API_BASE}${path}`, init);
+  if (res.status === 401) handleUnauthorized();
+  return res;
+}
+
 export class RunnerAPI {
-  constructor(private baseUrl: string, private secret: string) {}
+  constructor(private baseUrl: string = API_BASE) {}
 
   private async fetch<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: {
-        "x-runner-secret": this.secret,
         "content-type": "application/json",
         ...init?.headers,
       },
     });
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new APIError(401, "Session expired");
+    }
     if (!res.ok) {
       throw new APIError(res.status, await res.text());
     }
     return res.json();
   }
 
-  // Health (no auth needed)
+  // Health
   async health(): Promise<HealthResponse> {
     const res = await fetch(`${this.baseUrl}/health`);
     return res.json();
@@ -115,9 +143,9 @@ export class RunnerAPI {
     return this.fetch(`/jobs/${id}/retry`, { method: "POST" });
   }
 
-  // Log stream URL (for fetch with ReadableStream)
+  // Log stream URL (for fetch with ReadableStream) — proxied; no secret in URL
   getLogStreamUrl(jobId: string): string {
-    return `${this.baseUrl}/jobs/${jobId}/log/stream?secret=${encodeURIComponent(this.secret)}`;
+    return `${this.baseUrl}/jobs/${jobId}/log/stream`;
   }
 
   // Agents
@@ -375,12 +403,13 @@ export class RunnerAPI {
 
 let instance: RunnerAPI | null = null;
 
-export function getAPI(): RunnerAPI | null {
+export function getAPI(): RunnerAPI {
+  if (!instance) instance = new RunnerAPI();
   return instance;
 }
 
-export function initAPI(baseUrl: string, secret: string): RunnerAPI {
-  instance = new RunnerAPI(baseUrl, secret);
+export function initAPI(): RunnerAPI {
+  instance = new RunnerAPI();
   return instance;
 }
 

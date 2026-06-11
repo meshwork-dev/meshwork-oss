@@ -4,7 +4,10 @@ description: >
   Weekly agent coherence verifier. Audits all agent definition files in a product's plugin directory:
   checks tool frontmatter against .mcp.json, verifies skill references exist, validates context
   file references, and checks command/script references against package.json. Creates Jira stories
-  (label: agent-coherence) for issues needing human input. Auto-fixes clear broken references.
+  (label: agent-coherence) for issues needing human input. Primary output is Jira stories: auto-fix of
+  clear broken references only succeeds when run host-side with the plugin directory inside
+  CLAUDE_PROJECT_DIR; in the default product-working-dir/container context, guard_paths blocks all
+  plugin edits, so the skill falls back to story creation only.
 tools: Read, Write, Edit, Glob, Grep, Bash, mcp__n8n-jira-mcp__Get_an_issue_in_Jira_Software, mcp__n8n-jira-mcp__Add_a_comment_in_Jira_Software, mcp__n8n-jira-mcp__Update_an_issue_in_Jira_Software, mcp__n8n-jira-mcp__Get_the_status_of_an_issue_in_Jira_Software, mcp__n8n-jira-mcp__Create_an_issue_in_Jira_Software, mcp__n8n-jira-mcp__Get_many_issues_in_Jira_Software
 model: Sonnet
 memory: project
@@ -115,6 +118,12 @@ If an agent lists `mcp__n8n-jira-mcp__*` tools but `skills:` references no backe
 | **NEEDS-REVIEW** | MCP server not in .mcp.json, substantial tool mismatch, missing context | Create Jira story |
 
 ### Step 5: Auto-Fix
+
+> **Boundary constraint:** Agent files live in `<PLUGIN_DIR>/agents/`, which is OUTSIDE the product
+> codebase. When you run from the product working dir (the normal/container case), `guard_paths.py`
+> blocks every `Edit`/`Write` to the plugin directory and auto-fix silently fails — fall back to
+> creating Jira stories. Auto-fix only works when invoked **host-side** with the plugin directory
+> inside `CLAUDE_PROJECT_DIR`. Do not report an auto-fix as applied unless the Edit succeeded.
 
 For AUTO-FIX items:
 1. Read the agent file

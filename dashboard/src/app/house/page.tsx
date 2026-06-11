@@ -141,20 +141,20 @@ const EVENT_TYPE_STYLES: Record<string, { bg: string; border: string; label: str
   dialogue_turn:    { bg: "bg-zinc-900/60", border: "border-zinc-700/50", label: "DIALOGUE" },
 };
 
-function HouseView({ baseUrl, secret }: { baseUrl: string; secret: string }) {
+function HouseView({ baseUrl }: { baseUrl: string }) {
   const [state, setState] = useState<State | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch(`${baseUrl}/bigbrother/state`, { headers: { "x-runner-secret": secret } });
+      const r = await fetch(`${baseUrl}/bigbrother/state`);
       const j = await r.json();
       if (j?.ok) setState(j.state);
     } finally {
       setLoading(false);
     }
-  }, [baseUrl, secret]);
+  }, [baseUrl]);
 
   useEffect(() => {
     load();
@@ -165,7 +165,7 @@ function HouseView({ baseUrl, secret }: { baseUrl: string; secret: string }) {
   const call = async (path: string) => {
     setBusy(true);
     try {
-      await fetch(`${baseUrl}${path}`, { method: "POST", headers: { "x-runner-secret": secret } });
+      await fetch(`${baseUrl}${path}`, { method: "POST" });
       await load();
     } finally {
       setBusy(false);
@@ -366,11 +366,11 @@ function HouseView({ baseUrl, secret }: { baseUrl: string; secret: string }) {
 
       {/* Pixel house view */}
       <div className="rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden">
-        <HousePixelScene baseUrl={baseUrl} secret={secret} />
+        <HousePixelScene baseUrl={baseUrl} />
       </div>
 
       {/* Daily highlights reel */}
-      <DailyHighlights baseUrl={baseUrl} secret={secret} currentDay={state.day} eventsCount={state.events.length} />
+      <DailyHighlights baseUrl={baseUrl} currentDay={state.day} eventsCount={state.events.length} />
 
       {/* Diary Room — public/private gap */}
       {(() => {
@@ -637,9 +637,9 @@ type HighlightJob = {
 };
 
 function DailyHighlights({
-  baseUrl, secret, currentDay, eventsCount,
+  baseUrl, currentDay, eventsCount,
 }: {
-  baseUrl: string; secret: string; currentDay: number; eventsCount: number;
+  baseUrl: string; currentDay: number; eventsCount: number;
 }) {
   const [jobs, setJobs] = useState<HighlightJob[]>([]);
   const [busy, setBusy] = useState(false);
@@ -647,23 +647,19 @@ function DailyHighlights({
   const [selectedJob, setSelectedJob] = useState<HighlightJob | null>(null);
 
   const loadJobs = useCallback(async () => {
-    const r = await fetch(`${baseUrl}/bigbrother/highlights`, {
-      headers: { "x-runner-secret": secret },
-    });
+    const r = await fetch(`${baseUrl}/bigbrother/highlights`);
     const j = await r.json();
     if (j?.ok) {
       setJobs(j.jobs || []);
       if (!selectedId && j.jobs?.[0]) setSelectedId(j.jobs[0].id);
     }
-  }, [baseUrl, secret, selectedId]);
+  }, [baseUrl, selectedId]);
 
   const loadJobDetail = useCallback(async (id: string) => {
-    const r = await fetch(`${baseUrl}/bigbrother/highlights/${id}`, {
-      headers: { "x-runner-secret": secret },
-    });
+    const r = await fetch(`${baseUrl}/bigbrother/highlights/${id}`);
     const j = await r.json();
     if (j?.ok) setSelectedJob(j.job);
-  }, [baseUrl, secret]);
+  }, [baseUrl]);
 
   useEffect(() => { loadJobs(); }, [loadJobs]);
   useEffect(() => {
@@ -681,7 +677,7 @@ function DailyHighlights({
     try {
       const r = await fetch(`${baseUrl}/bigbrother/highlights`, {
         method: "POST",
-        headers: { "x-runner-secret": secret, "content-type": "application/json" },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify(opts),
       });
       const j = await r.json();
@@ -695,7 +691,7 @@ function DailyHighlights({
   };
 
   const videoSrc = selectedJob?.hasVideo
-    ? `${baseUrl}/bigbrother/highlights/${selectedJob.id}/video?secret=${encodeURIComponent(secret)}`
+    ? `${baseUrl}/bigbrother/highlights/${selectedJob.id}/video`
     : null;
 
   return (
@@ -812,13 +808,13 @@ function DailyHighlights({
 export default function Page() {
   return (
     <AuthGate>
-      {({ baseUrl, secret }) => (
+      {({ baseUrl }) => (
         <div className="flex min-h-screen">
           <Sidebar />
           <div className="flex-1 flex flex-col">
             <Header baseUrl={baseUrl} />
             <main className="flex-1 p-2 sm:p-4 md:p-6 pb-24 md:pb-6">
-              <HouseView baseUrl={baseUrl} secret={secret} />
+              <HouseView baseUrl={baseUrl} />
             </main>
           </div>
         </div>

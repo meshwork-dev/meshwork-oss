@@ -264,8 +264,8 @@ function PipelineDetail({ pipeline: summary, onBack }: { pipeline: Pipeline; onB
     try {
       await api.cancelPipeline(p.id);
       setPipeline({ ...p, status: "cancelled" });
-    } catch {
-      // silent — user will see status unchanged
+    } catch (err) {
+      console.warn(`[pipelines] Failed to cancel pipeline ${p.id}:`, err);
     } finally {
       setActionLoading(null);
     }
@@ -278,8 +278,8 @@ function PipelineDetail({ pipeline: summary, onBack }: { pipeline: Pipeline; onB
     try {
       await api.restartPipeline(p.id);
       onBack(); // go back to list so they see the new pipeline
-    } catch {
-      // silent
+    } catch (err) {
+      console.warn(`[pipelines] Failed to restart pipeline ${p.id}:`, err);
     } finally {
       setActionLoading(null);
     }
@@ -342,8 +342,8 @@ function PipelineDetail({ pipeline: summary, onBack }: { pipeline: Pipeline; onB
   );
 }
 
-function PipelinesPage({ baseUrl, secret }: { baseUrl: string; secret: string }) {
-  useSSE(baseUrl, secret);
+function PipelinesPage() {
+  useSSE();
   const { data: pipelines, isLoading } = usePipelines();
   const [selected, setSelected] = useState<Pipeline | null>(null);
 
@@ -398,13 +398,13 @@ function PipelinesPage({ baseUrl, secret }: { baseUrl: string; secret: string })
 export default function Page() {
   return (
     <AuthGate>
-      {({ baseUrl, secret }) => (
+      {({ baseUrl }) => (
         <div className="flex min-h-screen">
           <Sidebar />
           <div className="flex-1 flex flex-col">
             <Header baseUrl={baseUrl} />
             <main className="flex-1 p-6">
-              <PipelinesPage baseUrl={baseUrl} secret={secret} />
+              <PipelinesPage />
             </main>
           </div>
         </div>

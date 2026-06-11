@@ -26,7 +26,7 @@ Agents are defined in `meshwork-plugin/agents/`:
 | `qa-agent` | Unified verification: code quality + Playwright browser tests + AC validation | `verify` pipeline phase (mandatory) |
 | `ask-dave-agent` | Elite problem-solving and troubleshooting | `troubleshoot` action, direct invocation |
 | `e2e-builder` | Full-lifecycle feature builder (requirements to tests) | `e2e-build` action, direct invocation |
-| `uat-agent` | (Legacy — merged into qa-agent) Standalone Playwright UAT if needed | Direct invocation only |
+| `uat-agent` | Browser-level UAT via Playwright: runs user journeys against the live app with screenshot/trace evidence (distinct from `qa-agent`'s code-level testing) | Direct invocation, subtask routing |
 
 ## Direct Agent Mode
 

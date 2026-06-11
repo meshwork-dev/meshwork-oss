@@ -37,6 +37,8 @@ External Triggers (Issue tracker / chat / N8N schedules)
   skills, commands, hooks.
 - `workflows/` — N8N workflow definitions (sanitised templates).
 - `n8n/` — Docker Compose configuration for N8N.
+- `scripts/` — Operational helpers (workflow import, agent linting,
+  auth sync, safe deploy).
 
 **Two execution modes:**
 - **Delivery** (`POST /run`) — Issue-driven; requires `issueKey` + working dir.
@@ -83,11 +85,28 @@ npm install
 RUNNER_SECRET=$(grep ^RUNNER_SECRET= ../.env | cut -d= -f2) node runner.js
 ```
 
+### Tests (runner)
+
+```bash
+cd claude-runner
+npm test                   # node --test test/*.test.mjs
+```
+
+Integration tests start a throwaway Postgres container
+(`postgres:16-alpine`, reused across runs) and skip cleanly when Docker
+is unavailable; unit tests always run. No real Claude CLI is executed —
+the harness stubs `config.claude.command` and redirects `HOME`. The
+harness temporarily writes `claude-runner/config.json` (backing up any
+existing one), so don't run tests alongside a production runner started
+from the same directory. See `claude-runner/test/README.md`.
+
 ### N8N (workflow automation)
 
 N8N runs in the same Compose stack at `http://localhost:5678`. Workflows in
-`workflows/` are sanitised templates — import them via the N8N UI and bind
-your own credentials.
+`workflows/` are sanitised templates — batch-import them with
+`./scripts/import-workflows.sh` (substitutes `{{PLACEHOLDER}}` tokens from
+`.env`; requires `N8N_API_KEY`; `--force` updates existing workflows), or
+import via the N8N UI. Bind your own credentials either way.
 
 ### Dashboard (standalone dev)
 
@@ -113,11 +132,16 @@ npm run dev    # http://localhost:3100
 | IDEMPOTENCY_TTL_HOURS | 72 | Dedup cache TTL |
 | MAX_RETRIES | 3 | Max retry attempts for failed jobs |
 | SSE_ENABLED | true | Enable Server-Sent Events endpoint |
+| RETENTION_DAYS | 0 | Days to keep finished jobs/conversations/read notifications; 0 disables pruning |
 | RUNNER_DB_HOST | postgres | Postgres host (use external host in external mode) |
 | RUNNER_DB_PORT | 5432 | Postgres port |
 | RUNNER_DB_NAME | runner | Postgres database name |
 | RUNNER_DB_USER | runner | Postgres user |
 | RUNNER_DB_PASSWORD | (generated) | Postgres password |
+
+Dashboard (server-side): `RUNNER_URL` (runner base URL; compose sets
+`http://runner:3210`), `RUNNER_SECRET` (attached by the proxy, never sent
+to the browser), `DASHBOARD_PASSWORD` (login + session-token key).
 
 ## Built-in Agents
 
@@ -157,6 +181,7 @@ All endpoints except `GET /health` require `x-runner-secret` header.
 - `GET  /agents` — list registered agents
 - `GET  /jobs/:id` — job detail
 - `GET  /jobs/:id/output` — full output stream
+- `GET  /jobs/:id/log/stream` — live log stream for a running job
 - `POST /pipeline` — start a multi-phase pipeline
 - `GET  /pipelines/:id` — pipeline status
 - `GET  /events` — Server-Sent Events
@@ -199,6 +224,15 @@ Spawns `claude --dangerously-skip-permissions --model <model-id> -p
 --output-format stream-json --verbose`. OAuth-only auth — credentials are
 bind-mounted from the host's `~/.claude/.credentials.json` into the runner
 container.
+
+### Dashboard Auth
+
+The browser never sees `RUNNER_SECRET`. The dashboard logs in with
+`DASHBOARD_PASSWORD`, which sets an httpOnly session cookie (HMAC-derived,
+see `dashboard/src/lib/server-auth.ts`). All runner calls go through the
+server-side proxy `dashboard/src/app/api/runner/[...path]/route.ts`, which
+verifies the cookie and attaches the secret; responses are streamed so SSE
+and log streams work through it.
 
 ### Reliability
 

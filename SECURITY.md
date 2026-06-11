@@ -66,6 +66,16 @@ Even with no known vulnerabilities, Meshwork executes Claude Code with broad per
 - Don't commit `.env`, `.credentials.json`, N8N export bundles, or `products/<id>/product.json` if it contains tokens
 - Treat agent-generated PRs the same way you'd treat a junior engineer's PR — review before merge
 
+## Trust Model & Deployment Guidance
+
+Meshwork is an automation platform that hands real shell access to an AI agent. Understand what you're trusting before you deploy it:
+
+- **Issue and chat input is code execution.** The runner spawns Claude Code with `--dangerously-skip-permissions`, so anyone who can create issues, send chat messages, or otherwise get content in front of an agent can effectively cause command execution inside the working directories. Treat every input source (Jira projects, Telegram/Slack/Discord channels, webhooks) as a *trusted* channel — restrict who can write to them as carefully as you'd restrict commit access.
+- **`ALLOWED_ROOTS` is a guardrail, not a sandbox.** It limits which directories jobs may run in, but it does not contain a compromised or misbehaving agent. Run the runner in a container with least-privilege mounts: mount only the project directories agents actually need, read-only wherever possible.
+- **Never expose ports 3210 (runner), 3100 (dashboard), or 5678 (N8N) to the public internet** without a TLS-terminating reverse proxy and network ACLs in front of them. The bundled basic-auth and shared-secret checks are not designed to withstand direct internet exposure.
+- **The runner holds your Claude identity.** The host's `~/.claude` OAuth credentials are bind-mounted into the runner container. Anyone with control of the runner (or its container) can act as that Claude account. Use a dedicated account where practical and audit who can reach the container.
+- **`RUNNER_SECRET` grants full API control** — job dispatch, agent invocation, pipeline control. Store it like a production credential and rotate it immediately if it is ever exposed (update `.env` and restart the stack).
+
 ## Hall of Fame
 
 Reporters who help improve Meshwork's security posture are listed here (with permission) once their advisory ships.

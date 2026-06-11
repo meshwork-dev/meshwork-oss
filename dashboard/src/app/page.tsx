@@ -13,9 +13,9 @@ import type { Stats, Job } from "@/lib/types";
 import { StatusBadge } from "@/components/jobs/StatusBadge";
 import Link from "next/link";
 
-function Overview({ baseUrl, secret }: { baseUrl: string; secret: string }) {
+function Overview({ baseUrl }: { baseUrl: string }) {
   const { data: health } = useHealth(baseUrl);
-  const { status: sseStatus } = useSSE(baseUrl, secret);
+  const { status: sseStatus } = useSSE();
   const [stats, setStats] = useState<Stats | null>(null);
   const [recentJobs, setRecentJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,7 +28,7 @@ function Overview({ baseUrl, secret }: { baseUrl: string; secret: string }) {
         setStats(s);
         setRecentJobs(j.jobs.slice(0, 10));
       })
-      .catch(() => {})
+      .catch((err) => console.warn("[overview] Failed to load stats/jobs:", err))
       .finally(() => setLoading(false));
   }
 
@@ -107,13 +107,13 @@ function Overview({ baseUrl, secret }: { baseUrl: string; secret: string }) {
 export default function Home() {
   return (
     <AuthGate>
-      {({ baseUrl, secret }) => (
+      {({ baseUrl }) => (
         <div className="flex flex-col min-h-screen md:flex-row">
           <Sidebar />
           <div className="flex-1 flex flex-col pb-14 md:pb-0">
             <Header baseUrl={baseUrl} />
             <main className="flex-1 p-2 sm:p-4 md:p-6">
-              <Overview baseUrl={baseUrl} secret={secret} />
+              <Overview baseUrl={baseUrl} />
             </main>
           </div>
         </div>

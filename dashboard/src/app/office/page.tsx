@@ -17,18 +17,18 @@ const OfficeScene = dynamic(() => import("@/components/office/OfficePixelScene")
 
 type Product = { id: string; name: string };
 
-function OfficeView({ baseUrl, secret }: { baseUrl: string; secret: string }) {
+function OfficeView({ baseUrl }: { baseUrl: string }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [productId, setProductId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${baseUrl}/api/products`, { headers: { "x-runner-secret": secret } })
+    fetch(`${baseUrl}/api/products`)
       .then((r) => (r.ok ? r.json() : []))
       .then((list: Product[]) => {
         if (Array.isArray(list)) setProducts(list);
       })
-      .catch(() => {});
-  }, [baseUrl, secret]);
+      .catch((err) => console.warn("[office] Failed to load products:", err));
+  }, [baseUrl]);
 
   const current = products.find((p) => p.id === productId);
 
@@ -65,7 +65,6 @@ function OfficeView({ baseUrl, secret }: { baseUrl: string; secret: string }) {
         <OfficeScene
           key={productId ?? "all"}
           baseUrl={baseUrl}
-          secret={secret}
           productId={productId}
         />
       </div>
@@ -76,13 +75,13 @@ function OfficeView({ baseUrl, secret }: { baseUrl: string; secret: string }) {
 export default function Page() {
   return (
     <AuthGate>
-      {({ baseUrl, secret }) => (
+      {({ baseUrl }) => (
         <div className="flex min-h-screen">
           <Sidebar />
           <div className="flex-1 flex flex-col">
             <Header baseUrl={baseUrl} />
             <main className="flex-1 p-2 sm:p-4 md:p-6">
-              <OfficeView baseUrl={baseUrl} secret={secret} />
+              <OfficeView baseUrl={baseUrl} />
             </main>
           </div>
         </div>

@@ -31,8 +31,10 @@ export function LiveLog({ jobId, jobStatus }: { jobId: string; jobStatus: string
           const text = decoder.decode(value, { stream: true });
           setContent((prev) => prev + text);
         }
-      } catch {
-        // Stream ended or errored
+      } catch (err) {
+        if (!cancelled) {
+          console.warn(`[live-log] Log stream for job ${jobId} ended unexpectedly:`, err);
+        }
       }
     }
 

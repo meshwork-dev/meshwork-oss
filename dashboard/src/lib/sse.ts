@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { mutate } from "swr";
+import { API_BASE } from "./api";
 import type { SSEEvent, JobProgress } from "./types";
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
@@ -16,21 +17,28 @@ const JOB_EVENTS = [
   "job:quality-gate-retry",
 ];
 
-export function useSSE(baseUrl: string | null, secret: string | null) {
+const INITIAL_BACKOFF_MS = 1000;
+const MAX_BACKOFF_MS = 30000;
+
+export function useSSE() {
   const [events, setEvents] = useState<SSEEvent[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const [jobProgress, setJobProgress] = useState<Map<string, JobProgress[]>>(new Map());
   const esRef = useRef<EventSource | null>(null);
+  const backoffRef = useRef(INITIAL_BACKOFF_MS);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const connect = useCallback(() => {
-    if (!baseUrl || !secret) return;
-
-    const url = `${baseUrl}/events?secret=${encodeURIComponent(secret)}`;
+    // Authenticated via httpOnly session cookie — no secret in the URL.
+    const url = `${API_BASE}/events`;
     const es = new EventSource(url);
     esRef.current = es;
     setStatus("connecting");
 
-    es.onopen = () => setStatus("connected");
+    es.onopen = () => {
+      setStatus("connected");
+      backoffRef.current = INITIAL_BACKOFF_MS; // reset backoff on success
+    };
 
     // Handle named events from the runner (event: job:started\ndata: {...})
     for (const eventName of JOB_EVENTS) {
@@ -64,8 +72,8 @@ export function useSSE(baseUrl: string | null, secret: string | null) {
               });
             }
           }
-        } catch {
-          // skip malformed events
+        } catch (err) {
+          console.warn(`[sse] Skipping malformed "${eventName}" event:`, err);
         }
       });
     }
@@ -83,8 +91,8 @@ export function useSSE(baseUrl: string | null, secret: string | null) {
             return next;
           });
         }
-      } catch {
-        // skip
+      } catch (err) {
+        console.warn("[sse] Skipping malformed job:progress event:", err);
       }
     });
 
@@ -98,21 +106,26 @@ export function useSSE(baseUrl: string | null, secret: string | null) {
           timestamp: new Date().toISOString(),
         };
         setEvents((prev) => [event, ...prev].slice(0, 100));
-      } catch {
-        // skip malformed events
+      } catch (err) {
+        console.warn("[sse] Skipping malformed message event:", err);
       }
     };
 
     es.onerror = () => {
       setStatus("disconnected");
       es.close();
-      setTimeout(connect, 5000);
+      // Exponential backoff: 1s doubling up to 30s, reset on successful open.
+      const delay = backoffRef.current;
+      backoffRef.current = Math.min(delay * 2, MAX_BACKOFF_MS);
+      console.warn(`[sse] Connection lost; reconnecting in ${delay}ms`);
+      reconnectTimerRef.current = setTimeout(connect, delay);
     };
-  }, [baseUrl, secret]);
+  }, []);
 
   useEffect(() => {
     connect();
     return () => {
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       esRef.current?.close();
     };
   }, [connect]);

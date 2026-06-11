@@ -5,7 +5,7 @@
 
 ### Core Workflows
 - **Jira_Actuator.json** - MCP-based Jira AND Confluence operations (issues, comments, transitions, pages, subtasks, issue links)
-- **Jira_Webhook_Licstener.json** - Webhook listener with idempotency, routes to agents or pipelines based on issue characteristics and labels. Issues with `needs-requirements` or `needs-ux-design` labels are routed to `POST /pipeline` (new-feature pipeline). Security-labeled bugs go to the security-fix pipeline. All other issues follow the existing direct dispatch path.
+- **Jira_Webhook_Listener.json** - Webhook listener with idempotency, routes to agents or pipelines based on issue characteristics and labels. Issues with `needs-requirements` or `needs-ux-design` labels are routed to `POST /pipeline` (new-feature pipeline). Security-labeled bugs go to the security-fix pipeline. All other issues follow the existing direct dispatch path.
 - **Subtask_Webhook_Listener.json** - Handles Jira subtask events, checks blockers, triggers agents based on labels
 - **Slack_PM_Bot.json** - Slack DM → normalize → runner → reply
 - **Runner_Callback.json** - Receives runner completion → posts to Slack → parses CREATE-SUBTASKS → creates subtasks with links

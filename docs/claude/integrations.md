@@ -52,7 +52,7 @@ The Operations page includes a **Sales Pipeline** tab showing:
 ## Marketing Content Management
 
 ### Routing
-Issues with `[Marketing]` prefix in summary are automatically routed to the `marketing` agent (no event type header needed). Routing logic is in `Jira_Webhook_Licstener.json`.
+Issues with `[Marketing]` prefix in summary are automatically routed to the `marketing` agent (no event type header needed). Routing logic is in `Jira_Webhook_Listener.json`.
 
 ### Confluence Structure (MKTG Space)
 ```

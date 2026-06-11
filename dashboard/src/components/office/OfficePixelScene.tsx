@@ -73,23 +73,22 @@ const STATE_COLOR: Record<AgentState, string> = {
 /* Data hook (shared with 3D version)                                  */
 /* ------------------------------------------------------------------ */
 
-function useOfficeData(baseUrl: string, secret: string, productId: string | null) {
+function useOfficeData(baseUrl: string, productId: string | null) {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    const headers = { "x-runner-secret": secret };
     const agentsUrl = productId
       ? `${baseUrl}/api/products/${encodeURIComponent(productId)}/agents`
       : `${baseUrl}/agents`;
     const load = async () => {
       try {
         const [aRes, mRes, jRes] = await Promise.all([
-          fetch(agentsUrl, { headers }),
-          fetch(`${baseUrl}/api/meetings`, { headers }),
-          fetch(`${baseUrl}/jobs?limit=50&status=running`, { headers }),
+          fetch(agentsUrl),
+          fetch(`${baseUrl}/api/meetings`),
+          fetch(`${baseUrl}/jobs?limit=50&status=running`),
         ]);
         if (cancelled) return;
         if (aRes.ok) { const j = await aRes.json(); setAgents(j.agents ?? []); }
@@ -104,11 +103,12 @@ function useOfficeData(baseUrl: string, secret: string, productId: string | null
               const mid = m.meetingId ?? m.id;
               if (!mid) return m;
               try {
-                const r = await fetch(`${baseUrl}/meeting/${encodeURIComponent(mid)}`, { headers });
+                const r = await fetch(`${baseUrl}/meeting/${encodeURIComponent(mid)}`);
                 if (!r.ok) return m;
                 const d = await r.json();
                 return { ...m, ...d };
-              } catch {
+              } catch (err) {
+                console.warn(`[office] Failed to load meeting ${mid} detail:`, err);
                 return m;
               }
             })
@@ -127,12 +127,14 @@ function useOfficeData(baseUrl: string, secret: string, productId: string | null
           });
           setMeetings(merged);
         }
-      } catch { /* retry */ }
+      } catch (err) {
+        console.warn("[office] Failed to load office data (will retry):", err);
+      }
     };
     load();
     const iv = setInterval(load, 4000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [baseUrl, secret, productId]);
+  }, [baseUrl, productId]);
 
   const nodes = useMemo<AgentNode[]>(() => {
     const activeMeetings = meetings.filter((m) => (m.status ?? "active") !== "ended");
@@ -828,13 +830,13 @@ function randomIdleWaypoint(name: string, seed: number): Waypoint {
 /* Main component                                                      */
 /* ------------------------------------------------------------------ */
 
-export default function OfficePixelScene({ baseUrl, secret, productId = null }: { baseUrl: string; secret: string; productId?: string | null }) {
+export default function OfficePixelScene({ baseUrl, productId = null }: { baseUrl: string; productId?: string | null }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const staticRef = useRef<HTMLCanvasElement | null>(null);
   const simRef = useRef<Map<string, Sim>>(new Map());
   const nodesRef = useRef<AgentNode[]>([]);
   const [hover, setHover] = useState<{ x: number; y: number; node: AgentNode } | null>(null);
-  const { nodes } = useOfficeData(baseUrl, secret, productId);
+  const { nodes } = useOfficeData(baseUrl, productId);
 
   // Pre-render static scene once
   useEffect(() => {

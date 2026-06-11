@@ -139,6 +139,14 @@ const JIRA_TYPE_MAP = {
   subtask: "Sub-task",
 };
 
+/**
+ * Escape a value for safe interpolation inside a double-quoted JQL string.
+ * Backslashes first, then double quotes.
+ */
+function escapeJql(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 // ---------------------------------------------------------------------------
 // Unified API
 // ---------------------------------------------------------------------------
@@ -188,16 +196,16 @@ const tracker = {
     if (isJiraEnabled()) {
       // Build JQL from query params
       const jqlParts = [];
-      if (query.project) jqlParts.push(`project = "${query.project}"`);
+      if (query.project) jqlParts.push(`project = "${escapeJql(query.project)}"`);
       if (query.status) {
         const jiraStatus = query.status === "todo" ? "To Do" : query.status === "in_progress" ? "In Progress" : query.status === "done" ? "Done" : query.status;
-        jqlParts.push(`status = "${jiraStatus}"`);
+        jqlParts.push(`status = "${escapeJql(jiraStatus)}"`);
       }
-      if (query.type) jqlParts.push(`issuetype = "${JIRA_TYPE_MAP[query.type] || query.type}"`);
-      if (query.assignee) jqlParts.push(`assignee = "${query.assignee}"`);
-      if (query.label) jqlParts.push(`labels = "${query.label}"`);
-      if (query.search) jqlParts.push(`summary ~ "${query.search}"`);
-      if (query.parentKey) jqlParts.push(`parent = "${query.parentKey}"`);
+      if (query.type) jqlParts.push(`issuetype = "${escapeJql(JIRA_TYPE_MAP[query.type] || query.type)}"`);
+      if (query.assignee) jqlParts.push(`assignee = "${escapeJql(query.assignee)}"`);
+      if (query.label) jqlParts.push(`labels = "${escapeJql(query.label)}"`);
+      if (query.search) jqlParts.push(`summary ~ "${escapeJql(query.search)}"`);
+      if (query.parentKey) jqlParts.push(`parent = "${escapeJql(query.parentKey)}"`);
 
       const jql = jqlParts.length > 0 ? jqlParts.join(" AND ") : `project IS NOT EMPTY`;
       const maxResults = query.limit || 50;
@@ -377,3 +385,5 @@ const tracker = {
 };
 
 module.exports = tracker;
+// Exported for tests (JQL injection hardening)
+module.exports.escapeJql = escapeJql;

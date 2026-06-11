@@ -1,0 +1,81 @@
+{
+  "name": "Plan Approval Gate",
+  "nodes": [
+    {
+      "id": "gate-webhook",
+      "name": "Plan Callback",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "plan-gate-aaaa-bbbb-cccc-000000000001",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "plan-approval-gate",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "gate-build",
+      "name": "Build Plan Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const b = $json.body || $json;\nconst jobId = b.jobId || '';\nconst chatId = String((b.telegram && b.telegram.chatId) || '');\nconst plan = (b.parsedOutput && b.parsedOutput.result) || b.result || '';\n// Only render when the plan is actually ready. Ignore the runner's job-start callback\n// (event:'started' / status:'running') which carries no plan yet — it was producing a\n// premature '(planner returned no plan text)' card with live buttons.\nif (!chatId || !jobId || b.event === 'started' || b.status === 'running' || !plan.trim()) { return []; }\nconst out = [];\nconst MAX = 3800;\nconst body = plan.trim();\nfor (let i = 0; i < body.length; i += MAX) { out.push({ json: { chatId, text: body.slice(i, i + MAX) } }); }\nconst kb = JSON.stringify({ inline_keyboard: [[\n  { text: '\\u2705 Approve & Implement', callback_data: 'plan:approve:' + jobId },\n  { text: '\\u274c Reject', callback_data: 'plan:reject:' + jobId }\n]] });\nout.push({ json: { chatId, text: '\\ud83d\\udccb Plan ready (job ' + jobId + '). Approve to dispatch engineer-implementer, or reject.', keyboard: kb } });\nreturn out;"
+      }
+    },
+    {
+      "id": "gate-send",
+      "name": "Send Plan Messages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign({ chat_id: $json.chatId, text: $json.text, disable_web_page_preview: true }, $json.keyboard ? { reply_markup: JSON.parse($json.keyboard) } : {})) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Plan Callback": {
+      "main": [
+        [
+          {
+            "node": "Build Plan Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Plan Card": {
+      "main": [
+        [
+          {
+            "node": "Send Plan Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

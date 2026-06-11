@@ -459,7 +459,7 @@ function standingPosFor(loc: LocationId, name: string): { x: number; y: number }
   };
 }
 
-export default function HousePixelScene({ baseUrl, secret }: { baseUrl: string; secret: string }) {
+export default function HousePixelScene({ baseUrl }: { baseUrl: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const staticRef = useRef<HTMLCanvasElement | null>(null);
   const simRef = useRef<Map<string, Sim>>(new Map());
@@ -472,18 +472,20 @@ export default function HousePixelScene({ baseUrl, secret }: { baseUrl: string; 
     let cancelled = false;
     const load = async () => {
       try {
-        const r = await fetch(`${baseUrl}/bigbrother/state`, { headers: { "x-runner-secret": secret } });
+        const r = await fetch(`${baseUrl}/bigbrother/state`);
         if (!r.ok) return;
         const j = await r.json();
         if (cancelled || !j?.ok) return;
         setState(j.state);
         stateRef.current = j.state;
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn("[house] Failed to load loop state (will retry):", err);
+      }
     };
     load();
     const iv = setInterval(load, 4000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [baseUrl, secret]);
+  }, [baseUrl]);
 
   // Pre-render static scene once
   useEffect(() => {

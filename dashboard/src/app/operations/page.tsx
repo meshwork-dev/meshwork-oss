@@ -39,14 +39,18 @@ function OperationsPage({ baseUrl }: { baseUrl: string }) {
     try {
       await getAPI()?.replayCallback(id);
       setCallbacks((prev) => prev.filter((c) => c.id !== id));
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn(`[operations] Failed to replay callback ${id}:`, err);
+    }
   }
 
   async function dismiss(id: string) {
     try {
       await getAPI()?.dismissCallback(id);
       setCallbacks((prev) => prev.filter((c) => c.id !== id));
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn(`[operations] Failed to dismiss callback ${id}:`, err);
+    }
   }
 
   if (loading) {

@@ -48,7 +48,9 @@ export function TaskTree({ issueKey }: { issueKey: string }) {
   useEffect(() => {
     getAPI()?.getTaskProgress(issueKey)
       .then(setProgress)
-      .catch(() => {})
+      .catch((err) => {
+        console.warn(`[task-tree] Failed to load task progress for ${issueKey}:`, err);
+      })
       .finally(() => setLoading(false));
   }, [issueKey]);
 

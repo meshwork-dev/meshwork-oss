@@ -497,7 +497,7 @@ function MessageThread({
 // ChatPage inner component
 // ---------------------------------------------------------------------------
 
-function ChatPage({ baseUrl, secret }: { baseUrl: string; secret: string }) {
+function ChatPage({ baseUrl }: { baseUrl: string }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [convsLoading, setConvsLoading] = useState(true);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
@@ -566,7 +566,7 @@ function ChatPage({ baseUrl, secret }: { baseUrl: string; secret: string }) {
       const ctrl = new AbortController();
       streamAbortRef.current = ctrl;
 
-      const url = `${baseUrl}/jobs/${jobId}/log/stream?secret=${encodeURIComponent(secret)}`;
+      const url = `${baseUrl}/jobs/${jobId}/log/stream`;
 
       try {
         const res = await fetch(url, { signal: ctrl.signal });
@@ -648,7 +648,7 @@ function ChatPage({ baseUrl, secret }: { baseUrl: string; secret: string }) {
         setIsStreaming(false);
       }
     },
-    [baseUrl, secret]
+    [baseUrl]
   );
 
   const handleSend = useCallback(
@@ -700,7 +700,6 @@ function ChatPage({ baseUrl, secret }: { baseUrl: string; secret: string }) {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "x-runner-secret": secret,
           },
           body: JSON.stringify({
             message: text,
@@ -745,7 +744,7 @@ function ChatPage({ baseUrl, secret }: { baseUrl: string; secret: string }) {
         setIsStreaming(false);
       }
     },
-    [activeChannelId, baseUrl, secret, streamJobLogs]
+    [activeChannelId, baseUrl, streamJobLogs]
   );
 
   // Layout: split panel
@@ -827,12 +826,12 @@ function ChatPage({ baseUrl, secret }: { baseUrl: string; secret: string }) {
 export default function Page() {
   return (
     <AuthGate>
-      {({ baseUrl, secret }) => (
+      {({ baseUrl }) => (
         <div className="flex min-h-screen">
           <Sidebar />
           <div className="flex-1 flex flex-col">
             <Header baseUrl={baseUrl} />
-            <ChatPage baseUrl={baseUrl} secret={secret} />
+            <ChatPage baseUrl={baseUrl} />
           </div>
         </div>
       )}

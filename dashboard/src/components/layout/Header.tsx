@@ -2,7 +2,7 @@
 
 import { useHealth } from "@/hooks/useHealth";
 import { Badge } from "@/components/ui/Badge";
-import { clearAuth } from "@/lib/auth";
+import { logout } from "@/lib/auth";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 
 export function Header({ baseUrl }: { baseUrl: string | null }) {
@@ -37,7 +37,7 @@ export function Header({ baseUrl }: { baseUrl: string | null }) {
       <div className="flex items-center gap-3">
         <NotificationBell />
         <button
-          onClick={() => { clearAuth(); window.location.reload(); }}
+          onClick={async () => { await logout(); window.location.reload(); }}
           className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
         >
           Logout

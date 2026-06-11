@@ -54,7 +54,7 @@ Pipeline events: `pipeline:created`, `pipeline:phase-started`, `pipeline:phase-c
 
 ### N8N Routing
 
-The Jira Webhook Listener (`Jira_Webhook_Licstener.json`) routes to pipelines based on labels:
+The Jira Webhook Listener (`Jira_Webhook_Listener.json`) routes to pipelines based on labels:
 - `needs-requirements` or `needs-ux-design` → `POST /pipeline` with `pipelineType: "new-feature"`
 - `security-fix` or `security-vulnerability` on bugs → `POST /pipeline` with `pipelineType: "security-fix"`
 - `needs-design-system` → `POST /pipeline` with `pipelineType: "design-bootstrap"` (also auto-routed by sprint runner)

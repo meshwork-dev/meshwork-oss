@@ -8,8 +8,8 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useBatches } from "@/hooks/useBatches";
 import { useSSE } from "@/lib/sse";
 
-function BatchesPage({ baseUrl, secret }: { baseUrl: string; secret: string }) {
-  useSSE(baseUrl, secret);
+function BatchesPage() {
+  useSSE();
   const { data: batches, isLoading } = useBatches();
 
   return (
@@ -27,13 +27,13 @@ function BatchesPage({ baseUrl, secret }: { baseUrl: string; secret: string }) {
 export default function Page() {
   return (
     <AuthGate>
-      {({ baseUrl, secret }) => (
+      {({ baseUrl }) => (
         <div className="flex min-h-screen">
           <Sidebar />
           <div className="flex-1 flex flex-col">
             <Header baseUrl={baseUrl} />
             <main className="flex-1 p-6">
-              <BatchesPage baseUrl={baseUrl} secret={secret} />
+              <BatchesPage />
             </main>
           </div>
         </div>

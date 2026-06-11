@@ -127,7 +127,8 @@ function loadConfig() {
         opus: fileConfig.claude?.models?.opus || "claude-opus-4-5-20251101",
         sonnet: fileConfig.claude?.models?.sonnet || "claude-sonnet-4-5-20251101",
         haiku: fileConfig.claude?.models?.haiku || "claude-haiku-4-5-20251101"
-      }
+      },
+      fallbacks: fileConfig.claude?.fallbacks || { opus: "sonnet", sonnet: "haiku" }
     },
 
     // Provider configuration (claude, zai, etc.)
@@ -890,6 +891,27 @@ function shouldEnableChrome(job) {
   return { enabled: false, reason: "agent not configured for chrome access" };
 }
 
+/** Config-driven fallback tier: opus→sonnet→haiku per config.claude.fallbacks. */
+function fallbackModelFor(model) {
+  if (!model) return null;
+  const m = String(model);
+  let tier = null;
+  if (m === "opus" || m.startsWith("claude-opus")) tier = "opus";
+  else if (m === "sonnet" || m.startsWith("claude-sonnet")) tier = "sonnet";
+  else if (m === "haiku" || m.startsWith("claude-haiku")) tier = "haiku";
+  if (!tier) return null;
+  const fallbacks = config.claude.fallbacks || { opus: "sonnet", sonnet: "haiku" };
+  const fbTier = fallbacks[tier];
+  if (!fbTier || fbTier === tier) return null;
+  return config.claude.models[fbTier] || fbTier;
+}
+
+/** Push --fallback-model onto CLI args when a fallback exists (print-mode spawns only). */
+function pushFallbackModel(args, model) {
+  const fb = fallbackModelFor(model);
+  if (fb) args.push("--fallback-model", fb);
+}
+
 /**
  * Detect Chrome tool usage from Claude's raw output
  * Returns list of Chrome tools that were called and usage count
@@ -991,6 +1013,21 @@ const TOKEN_PRICE_INPUT = config.tokenPricing.inputPerMillion;
 const TOKEN_PRICE_OUTPUT = config.tokenPricing.outputPerMillion;
 
 const ALLOWED_ROOTS = config.allowedRoots;
+
+// Normalize path-mapping table entries once at load so prefix checks in
+// validateWorkingDir compare against canonical paths (no trailing separators,
+// no "." / ".." segments).
+{
+  const normalizedMappings = {};
+  for (const [from, to] of Object.entries(config.pathMappings || {})) {
+    let nFrom = path.normalize(String(from));
+    let nTo = path.normalize(String(to));
+    if (nFrom.length > 1 && nFrom.endsWith(path.sep)) nFrom = nFrom.slice(0, -1);
+    if (nTo.length > 1 && nTo.endsWith(path.sep)) nTo = nTo.slice(0, -1);
+    normalizedMappings[nFrom] = nTo;
+  }
+  config.pathMappings = normalizedMappings;
+}
 
 // Conversation memory
 const CONV_DIR = config.convDir || path.join(LOG_DIR, "conversations");
@@ -1490,6 +1527,7 @@ async function judgeBorderlineGate(meeting, summary) {
 
   const args = [...config.claude.baseArgs];
   args.push("--model", config.claude?.models?.haiku || "claude-haiku-4-5-20251101");
+  pushFallbackModel(args, "haiku");
   args.push("-p");
   args.push("--output-format", "stream-json", "--verbose");
   const cliCmd = config.claude?.command || "claude";
@@ -2425,6 +2463,7 @@ async function runHandRaiseRound(meeting, topicSummary, nonSpeakers) {
 
     const args = [...config.claude.baseArgs];
     args.push("--model", selectedModel);
+    pushFallbackModel(args, model);
     args.push("-p");
     args.push("--output-format", "stream-json", "--verbose");
     if (agentName) args.push("--agent", agentName);
@@ -2881,6 +2920,7 @@ async function generateAndFinalizeOutcomes(meeting) {
 
   const args = [...config.claude.baseArgs];
   args.push("--model", selectedModel);
+  pushFallbackModel(args, facilitatorModel);
   args.push("-p");
   args.push("--output-format", "stream-json", "--verbose");
   if (meeting.facilitator) args.push("--agent", meeting.facilitator);
@@ -3551,6 +3591,7 @@ async function runMeetingAgentTurn(meeting, agent, triggerMessage, options = {})
   // Build Claude CLI args
   const args = [...config.claude.baseArgs];
   args.push("--model", selectedModel);
+  pushFallbackModel(args, model);
   args.push("-p");
   args.push("--output-format", "stream-json", "--verbose");
   if (agent) args.push("--agent", agent);
@@ -6730,6 +6771,106 @@ function pruneCompletedJobs() {
   db.idempotency.prune(config.idempotencyTtlHours || 72).catch(e => console.error(`[db] idempotency prune failed: ${e.message}`));
 }
 
+/**
+ * ============================================================
+ * STALE-JOB RECOVERY (heartbeat)
+ * Running jobs touch a DB heartbeat every ~30s. A periodic sweep
+ * fails/retries running jobs whose heartbeat has gone stale (e.g.
+ * the runner died mid-job) and that are not tracked in memory.
+ * ============================================================
+ */
+const JOB_HEARTBEAT_INTERVAL_MS = 30 * 1000;
+const STALE_JOB_HEARTBEAT_MINUTES = 10;
+const STALE_JOB_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+// Single shared interval covering all running jobs — it stops touching a job
+// the moment it leaves "running", so no per-job timers can leak.
+setInterval(() => {
+  const runningIds = [];
+  const now = nowIso();
+  for (const job of jobs.values()) {
+    if (job.status === "running") {
+      job.heartbeatAt = now;
+      runningIds.push(job.jobId);
+    }
+  }
+  if (runningIds.length === 0) return;
+  db.jobs.touchHeartbeat(runningIds).catch(e => console.error(`[db] heartbeat update failed: ${e.message}`));
+}, JOB_HEARTBEAT_INTERVAL_MS);
+
+/**
+ * Mark an interrupted job for retry (through the existing retry path) or as
+ * failed when its retry budget is exhausted. Persists to DB and emits the
+ * existing job events so SSE/dashboard stay consistent.
+ */
+function recoverInterruptedJob(job, errorMsg) {
+  job.lastError = errorMsg;
+  const maxRetries = job.maxRetries ?? MAX_RETRIES;
+  if ((job.retryCount || 0) < maxRetries && !job.pipelineId) {
+    job.retryCount = (job.retryCount || 0) + 1;
+    job.status = "retry-pending";
+    job.retryAt = new Date(Date.now() + 5000).toISOString();
+    jobs.set(job.jobId, job);
+    db.jobs.set(job).catch(e => console.error(`[db] Failed to persist recovered job ${job.jobId}: ${e.message}`));
+
+    jobEmitter.emit("job:retry", {
+      jobId: job.jobId,
+      agent: job.agent,
+      retryCount: job.retryCount,
+      retryAt: job.retryAt,
+      error: errorMsg
+    });
+
+    setTimeout(() => {
+      if (job.status === "retry-pending") {
+        job.status = "queued";
+        job.startedAt = null;
+        queue.push({ jobId: job.jobId });
+        tickWorker();
+      }
+    }, 5000);
+  } else {
+    job.status = "failed";
+    job.error = errorMsg;
+    job.finishedAt = job.finishedAt || new Date().toISOString();
+    db.jobs.set(job).then(() => {
+      jobs.delete(job.jobId);
+    }).catch(e => console.error(`[db] Failed to persist failed job ${job.jobId}: ${e.message}`));
+
+    jobEmitter.emit("job:failed", {
+      jobId: job.jobId,
+      agent: job.agent,
+      issueKey: job.issueKey,
+      error: job.error,
+      retryCount: job.retryCount || 0,
+      finishedAt: job.finishedAt
+    });
+  }
+}
+
+async function sweepStaleRunningJobs() {
+  let staleJobs;
+  try {
+    staleJobs = await db.jobs.findStaleRunning(STALE_JOB_HEARTBEAT_MINUTES);
+  } catch (e) {
+    console.error(`[db] stale-job sweep query failed: ${e.message}`);
+    return;
+  }
+  for (const dbJob of staleJobs) {
+    // Guard against double-handling: jobs legitimately tracked as running in
+    // memory are owned by the heartbeat interval — only sweep orphaned rows.
+    const inMemory = jobs.get(dbJob.jobId);
+    if (inMemory && inMemory.status === "running") continue;
+    const job = inMemory || dbJob;
+    console.log(`[${nowIso()}] Stale-job sweep: ${job.jobId} (agent=${job.agent}) no heartbeat for ${STALE_JOB_HEARTBEAT_MINUTES}+ minutes — recovering`);
+    recoverInterruptedJob(job, `interrupted: runner lost job (no heartbeat for ${STALE_JOB_HEARTBEAT_MINUTES}+ minutes)`);
+  }
+}
+
+setInterval(() => {
+  sweepStaleRunningJobs().catch(e => console.error(`[${nowIso()}] Stale-job sweep error: ${e.message}`));
+}, STALE_JOB_SWEEP_INTERVAL_MS);
+
 async function loadStateFromDB() {
   try {
     // Load active jobs from DB into cache
@@ -6760,13 +6901,30 @@ async function loadStateFromDB() {
       // pipeline-resume path own re-execution.
       if (job.status === "running" || job.status === "queued" || job.status === "retry-pending" || job.status === "quality-gate-retry") {
         job.status = "failed";
-        job.error = "Process interrupted (runner restart)";
+        job.error = "interrupted: runner restarted mid-job";
+        job.lastError = job.error;
         job.finishedAt = job.finishedAt || new Date().toISOString();
         const maxRetries = job.maxRetries ?? MAX_RETRIES;
         if ((job.retryCount || 0) < maxRetries && !job.pipelineId) {
           job.status = "retry-pending";
           job.retryCount = (job.retryCount || 0) + 1;
           job.retryAt = new Date(Date.now() + 5000).toISOString();
+          jobEmitter.emit("job:retry", {
+            jobId: job.jobId,
+            agent: job.agent,
+            retryCount: job.retryCount,
+            retryAt: job.retryAt,
+            error: job.lastError
+          });
+        } else {
+          jobEmitter.emit("job:failed", {
+            jobId: job.jobId,
+            agent: job.agent,
+            issueKey: job.issueKey,
+            error: job.error,
+            retryCount: job.retryCount || 0,
+            finishedAt: job.finishedAt
+          });
         }
       }
       if (!TERMINAL_STATUSES.has(job.status)) {
@@ -8963,7 +9121,14 @@ function validateWorkingDir(workingDir) {
   const mappings = config.pathMappings || {};
   for (const [from, to] of Object.entries(mappings)) {
     if (mapped === from || mapped.startsWith(from + "/") || mapped.startsWith(from + path.sep)) {
-      mapped = to + mapped.slice(from.length);
+      const candidate = path.resolve(to + mapped.slice(from.length));
+      const mappedRoot = path.resolve(to);
+      // The mapped result must stay inside the mapping's target root
+      // (reject "../" escapes smuggled in via the suffix).
+      if (candidate !== mappedRoot && !candidate.startsWith(mappedRoot + path.sep)) {
+        return { ok: false, error: `workingDir not allowed: ${candidate}. Escapes mapped root: ${mappedRoot}` };
+      }
+      mapped = candidate;
       break;
     }
   }
@@ -8988,6 +9153,90 @@ function validateWorkingDir(workingDir) {
   }
 
   return { ok: true, resolved };
+}
+
+/**
+ * Build a job object with the construction shared by the /run, /chat and
+ * /agent endpoints, then persist it (in-memory map, DB write-through, meta
+ * file). Per-mode fields (agent, workingDir, issueKey, message, prompt,
+ * subtask fields, slack, …) are passed explicitly via `fields`.
+ *
+ * Does NOT enqueue — call sites enqueue(job.jobId) themselves so endpoint-
+ * specific steps (e.g. /run idempotency registration) keep their ordering.
+ *
+ * @param {object} opts
+ * @param {string} opts.mode - "delivery" | "chat" | "agent"
+ * @param {object} opts.jobIn - raw request job payload (model/provider/maxRetries/telegram/batchId/source extraction)
+ * @param {string|null} opts.callbackUrl - already-defaulted callback URL (defaults differ per endpoint)
+ * @param {object} opts.fields - per-mode job fields, spread into the job object
+ * @returns {object} the created job
+ */
+function createJob({ mode, jobIn, callbackUrl, fields }) {
+  const jobId = makeJobId();
+  const logFile = path.join(LOG_DIR, `${jobId}.log`);
+  const metaFile = path.join(LOG_DIR, `${jobId}.json`);
+
+  const job = {
+    jobId,
+    mode,
+
+    // Per-mode fields (agent, workingDir, issueKey, message, prompt, …)
+    ...fields,
+
+    // Model routing (Phase: Multi-Model)
+    model: jobIn.model || null, // Optional override (opus/sonnet/haiku)
+    requestedProvider: jobIn.provider || null, // Optional provider override (claude/zai)
+    selectedModel: null,  // Set by selectModel() at execution time
+
+    status: "queued",
+    createdAt: nowIso(),
+    startedAt: null,
+    finishedAt: null,
+
+    logFile,
+    metaFile,
+    processPid: null,
+
+    error: null,
+    lastError: null,
+    parsedOutput: null,
+
+    // Retry fields (Phase 1.2)
+    retryCount: 0,
+    maxRetries: jobIn.maxRetries ?? MAX_RETRIES,
+    retryAt: null,
+
+    // Quality gate retry tracking (Phase: Quality Gates)
+    qualityGateRetryCount: 0,
+    qualityGateFailure: null,
+    qualityGate: null,
+
+    // Usage tracking (Phase 1.5)
+    usage: null,
+
+    callbackUrl,
+    telegram: jobIn.telegram || null,
+    batchId: jobIn.batchId || null,
+    source: jobIn.source || null,
+
+    // Agent Teams metadata (Phase: Agent Teams Visibility)
+    teamSessionId: null,
+    teamRole: null,  // "lead" or "teammate"
+    teammates: [],
+  };
+
+  // Populate team metadata if this agent is a team lead
+  if (config.teams?.enabled && config.teams.teamLeads?.[job.agent]) {
+    job.teamSessionId = `team-${jobId}`;
+    job.teamRole = "lead";
+    job.teammates = config.teams.teamLeads[job.agent].teammates || [];
+  }
+
+  jobs.set(jobId, job);
+  db.jobs.set(job).catch(e => console.error(`[db] Failed to persist job ${jobId}: ${e.message}`));
+  fs.writeFileSync(metaFile, JSON.stringify(job, null, 2), "utf8");
+
+  return job;
 }
 
 /**
@@ -9930,6 +10179,7 @@ async function runClaudeForTeammate(job, teammate, planText, implementationResul
   const product = resolveProduct(job.workingDir);
 
   const args = [...(config.claude.baseArgs || []), "--model", modelId];
+  pushFallbackModel(args, modelTier);
   applyProductPluginDir(args, product);
 
   // Apply agent-specific tool restrictions (e.g., reviewer is read-only)
@@ -10784,6 +11034,7 @@ async function runConsultation({ agent, prompt, timeout = 120000, parentJobId })
 
   const args = [...(config.claude.baseArgs || ["--dangerously-skip-permissions"])];
   args.push("--model", modelId);
+  pushFallbackModel(args, modelId);
   args.push("--no-session-persistence");
   args.push("--max-turns", "3"); // Keep consultations short
   if (agent) args.push("--agent", agent);
@@ -10891,11 +11142,8 @@ async function runClaude(job) {
     const args = [...(config.claude.baseArgs || ["--dangerously-skip-permissions"])];
     args.push("--model", modelId);
 
-    // Fallback model: auto-fallback to sonnet when opus is overloaded (Claude provider only)
-    if (provider === "claude" && (model === "opus" || modelId.includes("opus"))) {
-      const fallbackId = config.claude.models.sonnet || "claude-sonnet-4-6";
-      args.push("--fallback-model", fallbackId);
-    }
+    // Config-driven fallback chain (opus→sonnet→haiku). Non-Claude models (e.g. GLM) get no flag.
+    if (provider === "claude") pushFallbackModel(args, model);
 
     // No session persistence: runner jobs are one-shot, don't save sessions to disk
     args.push("--no-session-persistence");
@@ -11490,6 +11738,7 @@ async function repairQualityGateFailure(job, failedCheck, attempt) {
   const repairModel = config.claude.models.sonnet || "claude-sonnet-4-6";
   const args = [...(config.claude.baseArgs || ["--dangerously-skip-permissions"])];
   args.push("--model", repairModel);
+  pushFallbackModel(args, "sonnet");
   args.push("-p");
   args.push("--output-format", "json");
   args.push("--no-session-persistence");
@@ -11593,6 +11842,10 @@ async function tickWorker() {
   runningByProduct.set(productId, getRunningForProduct(productId) + 1);
   job.status = "running";
   job.startedAt = nowIso();
+  job.heartbeatAt = job.startedAt;
+  // Persist the running status + initial heartbeat so the stale-job sweep can
+  // detect this job if the runner dies mid-execution.
+  db.jobs.set(job).catch(e => console.error(`[db] Failed to persist running job ${job.jobId}: ${e.message}`));
 
   // Select model before execution
   job.selectedModel = selectModel(job);
@@ -12346,6 +12599,18 @@ function enqueue(jobId) {
 }
 
 /**
+ * Timing-safe secret comparison.
+ * Both sides are hashed with sha256 first so length differences neither
+ * throw in timingSafeEqual nor leak length information.
+ */
+function secretMatches(provided) {
+  if (typeof provided !== "string" || provided.length === 0) return false;
+  const providedHash = crypto.createHash("sha256").update(provided).digest();
+  const secretHash = crypto.createHash("sha256").update(String(SECRET)).digest();
+  return crypto.timingSafeEqual(providedHash, secretHash);
+}
+
+/**
  * AUTH middleware
  * Accepts either:
  *   - X-Runner-Secret: <token>
@@ -12356,21 +12621,16 @@ function requireSecret(req, res, next) {
   const authHeader = req.header("authorization");
 
   // Check X-Runner-Secret header
-  if (headerSecret === SECRET) {
+  if (secretMatches(headerSecret)) {
     return next();
   }
 
   // Check Authorization: Bearer <token>
   if (authHeader && authHeader.startsWith("Bearer ")) {
     const bearerToken = authHeader.slice(7); // Remove "Bearer " prefix
-    if (bearerToken === SECRET) {
+    if (secretMatches(bearerToken)) {
       return next();
     }
-  }
-
-  // Check query param (for EventSource which can't set headers)
-  if (req.query.secret === SECRET) {
-    return next();
   }
 
   return res.status(401).json({ ok: false, error: "unauthorized" });
@@ -12424,7 +12684,7 @@ setInterval(checkN8NHealth, 60000);
 app.get("/health", async (req, res) => {
   // If protection is enabled, require secret for detailed info
   if (config.protectHealthEndpoint) {
-    if (req.header("x-runner-secret") !== SECRET) {
+    if (!secretMatches(req.header("x-runner-secret"))) {
       // Return minimal info without auth
       return res.json({ ok: true, time: nowIso() });
     }
@@ -12478,15 +12738,10 @@ app.post("/run", requireSecret, (req, res) => {
   const summary = jobIn.summary || jobIn?.issue?.fields?.summary || "";
   const description = jobIn.description || jobIn?.issue?.fields?.description || "";
   const agent = jobIn.agent || "";
-  const model = jobIn.model || null; // Optional model override (opus/sonnet/haiku)
-  const requestedProvider = jobIn.provider || null; // Optional provider override (claude/zai)
   const idempotencyKey = req.header("x-idempotency-key") || jobIn.idempotencyKey || null;
 
   const callbackUrl = jobIn.callbackUrl || N8N_CALLBACK_URL || null;
   const slack = jobIn.slack || null;
-  const telegram = jobIn.telegram || null;
-  const batchId = jobIn.batchId || null;
-  const source = jobIn.source || null; // { workflow, triggeredBy }
 
   // Subtask-related fields
   const parentKey = jobIn.parentKey || null;
@@ -12526,80 +12781,26 @@ app.post("/run", requireSecret, (req, res) => {
     }
   }
 
-  const jobId = makeJobId();
-  const logFile = path.join(LOG_DIR, `${jobId}.log`);
-  const metaFile = path.join(LOG_DIR, `${jobId}.json`);
-
-  const job = {
-    jobId,
+  const job = createJob({
     mode: "delivery",
-    issueKey: String(issueKey),
-    summary: summary ? String(summary) : "",
-    description: description ? String(description) : "",
-    workingDir: wd.resolved,
-    agent: agent ? String(agent) : "",
-
-    // Model routing (Phase: Multi-Model)
-    model: model || null, // Optional override (opus/sonnet/haiku)
-    requestedProvider: requestedProvider, // Optional provider override (claude/zai)
-    selectedModel: null,  // Set by selectModel() at execution time
-
-    status: "queued",
-    createdAt: nowIso(),
-    startedAt: null,
-    finishedAt: null,
-
-    logFile,
-    metaFile,
-    processPid: null,
-
-    error: null,
-    lastError: null,
-    parsedOutput: null,
-
-    // Retry fields (Phase 1.2)
-    retryCount: 0,
-    maxRetries: jobIn.maxRetries ?? MAX_RETRIES,
-    retryAt: null,
-
-    // Quality gate retry tracking (Phase: Quality Gates)
-    qualityGateRetryCount: 0,
-    qualityGateFailure: null,
-    qualityGate: null,
-
-    // Usage tracking (Phase 1.5)
-    usage: null,
-
+    jobIn,
     callbackUrl,
-    slack,
-    telegram,
-    batchId,
+    fields: {
+      issueKey: String(issueKey),
+      summary: summary ? String(summary) : "",
+      description: description ? String(description) : "",
+      workingDir: wd.resolved,
+      agent: agent ? String(agent) : "",
+      slack,
 
-    // Subtask-related fields
-    parentKey,
-    subtaskFiles,
-    subtaskDepth,
-    isSubtask: !!parentKey,
-
-    // Source tracking
-    source,
-
-    // Agent Teams metadata (Phase: Agent Teams Visibility)
-    teamSessionId: null,
-    teamRole: null,  // "lead" or "teammate"
-    teammates: [],
-  };
-
-  // Populate team metadata if this agent is a team lead
-  if (config.teams?.enabled && config.teams.teamLeads?.[job.agent]) {
-    job.teamSessionId = `team-${jobId}`;
-    job.teamRole = "lead";
-    job.teammates = config.teams.teamLeads[job.agent].teammates || [];
-  }
-
-  jobs.set(jobId, job);
-  db.jobs.set(job).catch(e => console.error(`[db] Failed to persist job ${jobId}: ${e.message}`));
-  fs.writeFileSync(metaFile, JSON.stringify(job, null, 2), "utf8");
+      // Subtask-related fields
+      parentKey,
+      subtaskFiles,
+      subtaskDepth,
+      isSubtask: !!parentKey,
+    },
+  });
+  const jobId = job.jobId;
 
   if (idempotencyKey) {
     idempotencyStore[idempotencyKey] = { jobId, createdAt: Date.now() };
@@ -12633,15 +12834,11 @@ app.post("/chat", requireSecret, async (req, res) => {
 
   const agent = jobIn.agent || "product-manager";
   const message = jobIn.message || jobIn.text || "";
-  const model = jobIn.model || null; // Optional model override (opus/sonnet/haiku)
-  const requestedProvider = jobIn.provider || null; // Optional provider override (claude/zai)
   if (!String(message).trim()) return res.status(400).json({ ok: false, error: "message is required" });
 
   const callbackUrl = jobIn.callbackUrl || null;
   const slack = jobIn.slack || null;
   const telegram = jobIn.telegram || null;
-  const batchId = jobIn.batchId || null;
-  const source = jobIn.source || null;
   const conversationId = jobIn.conversationId || (telegram?.chatId ? `telegram:${telegram.chatId}` : slack?.channel ? `slack:${slack.channel}` : "default");
 
   // workingDir optional in chat; default to process cwd
@@ -12657,73 +12854,21 @@ app.post("/chat", requireSecret, async (req, res) => {
   const trimmed = trimConversationMessages(conv.messages || []);
   const historyText = formatConversationForPrompt(trimmed);
 
-  const jobId = makeJobId();
-  const logFile = path.join(LOG_DIR, `${jobId}.log`);
-  const metaFile = path.join(LOG_DIR, `${jobId}.json`);
-
-  const job = {
-    jobId,
+  const job = createJob({
     mode: "chat",
-    agent: String(agent),
-    message: String(message),
-    conversationId: String(conversationId),
-    historyText,
-    workingDir: resolvedWorkingDir || DEFAULT_WORKING_DIR, // Use default if not specified
-    issueKey: null,
-
-    // Model routing (Phase: Multi-Model)
-    model: model || null, // Optional override (opus/sonnet/haiku)
-    requestedProvider: requestedProvider, // Optional provider override (claude/zai)
-    selectedModel: null,  // Set by selectModel() at execution time
-
-    status: "queued",
-    createdAt: nowIso(),
-    startedAt: null,
-    finishedAt: null,
-
-    logFile,
-    metaFile,
-    processPid: null,
-
-    error: null,
-    lastError: null,
-    parsedOutput: null,
-
-    // Retry fields (Phase 1.2)
-    retryCount: 0,
-    maxRetries: jobIn.maxRetries ?? MAX_RETRIES,
-    retryAt: null,
-
-    // Quality gate retry tracking (Phase: Quality Gates)
-    qualityGateRetryCount: 0,
-    qualityGateFailure: null,
-    qualityGate: null,
-
-    // Usage tracking (Phase 1.5)
-    usage: null,
-
+    jobIn,
     callbackUrl,
-    slack,
-    telegram,
-    batchId,
-    source,
-
-    // Agent Teams metadata (Phase: Agent Teams Visibility)
-    teamSessionId: null,
-    teamRole: null,
-    teammates: [],
-  };
-
-  // Populate team metadata if this agent is a team lead
-  if (config.teams?.enabled && config.teams.teamLeads?.[job.agent]) {
-    job.teamSessionId = `team-${jobId}`;
-    job.teamRole = "lead";
-    job.teammates = config.teams.teamLeads[job.agent].teammates || [];
-  }
-
-  jobs.set(jobId, job);
-  db.jobs.set(job).catch(e => console.error(`[db] Failed to persist job ${jobId}: ${e.message}`));
-  fs.writeFileSync(metaFile, JSON.stringify(job, null, 2), "utf8");
+    fields: {
+      agent: String(agent),
+      message: String(message),
+      conversationId: String(conversationId),
+      historyText,
+      workingDir: resolvedWorkingDir || DEFAULT_WORKING_DIR, // Use default if not specified
+      issueKey: null,
+      slack,
+    },
+  });
+  const jobId = job.jobId;
 
   enqueue(jobId);
 
@@ -12756,12 +12901,7 @@ app.post("/agent", requireSecret, (req, res) => {
   if (!String(prompt).trim()) return res.status(400).json({ ok: false, error: "prompt is required" });
 
   const context = jobIn.context || "";
-  const model = jobIn.model || null; // Optional model override (opus/sonnet/haiku)
-  const requestedProvider = jobIn.provider || null; // Optional provider override (claude/zai)
   const callbackUrl = jobIn.callbackUrl || N8N_CALLBACK_URL || null;
-  const batchId = jobIn.batchId || null;
-  const source = jobIn.source || null;
-  const telegram = jobIn.telegram || null;
 
   // workingDir optional; resolve from product/productId if provided, else default
   let resolvedWorkingDir = null;
@@ -12778,71 +12918,19 @@ app.post("/agent", requireSecret, (req, res) => {
     }
   }
 
-  const jobId = makeJobId();
-  const logFile = path.join(LOG_DIR, `${jobId}.log`);
-  const metaFile = path.join(LOG_DIR, `${jobId}.json`);
-
-  const job = {
-    jobId,
+  const job = createJob({
     mode: "agent",
-    agent: String(agent),
-    prompt: String(prompt),
-    context: context ? String(context) : "",
-    workingDir: resolvedWorkingDir || DEFAULT_WORKING_DIR,
-    issueKey: null,
-
-    // Model routing
-    model: model || null,
-    selectedModel: null,
-    requestedProvider: requestedProvider, // Optional provider override (claude/zai)
-
-    status: "queued",
-    createdAt: nowIso(),
-    startedAt: null,
-    finishedAt: null,
-
-    logFile,
-    metaFile,
-    processPid: null,
-
-    error: null,
-    lastError: null,
-    parsedOutput: null,
-
-    // Retry fields
-    retryCount: 0,
-    maxRetries: jobIn.maxRetries ?? MAX_RETRIES,
-    retryAt: null,
-
-    // Quality gate retry tracking
-    qualityGateRetryCount: 0,
-    qualityGateFailure: null,
-    qualityGate: null,
-
-    // Usage tracking
-    usage: null,
-
+    jobIn,
     callbackUrl,
-    batchId,
-    source,
-    telegram,
-
-    // Agent Teams metadata (Phase: Agent Teams Visibility)
-    teamSessionId: null,
-    teamRole: null,
-    teammates: [],
-  };
-
-  // Populate team metadata if this agent is a team lead
-  if (config.teams?.enabled && config.teams.teamLeads?.[job.agent]) {
-    job.teamSessionId = `team-${jobId}`;
-    job.teamRole = "lead";
-    job.teammates = config.teams.teamLeads[job.agent].teammates || [];
-  }
-
-  jobs.set(jobId, job);
-  db.jobs.set(job).catch(e => console.error(`[db] Failed to persist job ${jobId}: ${e.message}`));
-  fs.writeFileSync(metaFile, JSON.stringify(job, null, 2), "utf8");
+    fields: {
+      agent: String(agent),
+      prompt: String(prompt),
+      context: context ? String(context) : "",
+      workingDir: resolvedWorkingDir || DEFAULT_WORKING_DIR,
+      issueKey: null,
+    },
+  });
+  const jobId = job.jobId;
 
   enqueue(jobId);
 
@@ -13628,13 +13716,9 @@ app.get("/jobs/:jobId/log", requireSecret, async (req, res) => {
  * LIVE LOG STREAMING ENDPOINT
  * Sends existing log content then watches for new lines via fs.watch.
  * Auto-closes when job completes. Heartbeat every 15s.
- * Auth via query param for EventSource/fetch compatibility.
+ * Auth via x-runner-secret header (clients must proxy server-side).
  */
-app.get("/jobs/:jobId/log/stream", async (req, res) => {
-  // Auth via query param or header
-  const secret = req.query.secret || req.header("x-runner-secret");
-  if (secret !== SECRET) return res.status(401).json({ ok: false, error: "unauthorized" });
-
+app.get("/jobs/:jobId/log/stream", requireSecret, async (req, res) => {
   const job = await getJob(req.params.jobId);
   if (!job) return res.status(404).json({ ok: false, error: "job not found" });
   if (!job.logFile) return res.status(404).json({ ok: false, error: "no log file" });
@@ -14257,6 +14341,25 @@ setTimeout(() => {
   cleanupStaleLogs();
   pruneCompletedJobs();
 }, 60000);
+
+/**
+ * Optional retention pruning (RETENTION_DAYS env; default 0 = disabled).
+ * Deletes terminal jobs, untouched conversations, and read notifications
+ * older than the retention window. Runs daily and ~1 min after startup.
+ */
+const RETENTION_DAYS = Math.max(0, parseInt(process.env.RETENTION_DAYS || "0", 10) || 0);
+
+function runRetentionPrune() {
+  if (!RETENTION_DAYS) return;
+  db.retention.prune(RETENTION_DAYS).then(({ jobs: prunedJobs, conversations, notifications }) => {
+    console.log(`[${nowIso()}] Retention prune (${RETENTION_DAYS}d): deleted ${prunedJobs} job(s), ${conversations} conversation(s), ${notifications} read notification(s)`);
+  }).catch(e => console.error(`[db] retention prune failed: ${e.message}`));
+}
+
+if (RETENTION_DAYS > 0) {
+  setTimeout(runRetentionPrune, 60 * 1000);
+  setInterval(runRetentionPrune, 24 * 60 * 60 * 1000);
+}
 
 /**
  * ============================================================

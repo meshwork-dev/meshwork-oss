@@ -1,57 +1,51 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { getRunnerSecret, setRunnerSecret, clearAuth } from "@/lib/auth";
-import { initAPI } from "@/lib/api";
+import { checkSession, login, clearAuth } from "@/lib/auth";
+import { initAPI, API_BASE } from "@/lib/api";
 
-function getRunnerUrl() {
-  if (typeof window === "undefined") return "http://localhost:3210";
-  if (process.env.NEXT_PUBLIC_RUNNER_URL) return process.env.NEXT_PUBLIC_RUNNER_URL;
-  const { protocol, hostname } = window.location;
-  return `${protocol}//${hostname}:3210`;
-}
-
-export function AuthGate({ children }: { children: (props: { baseUrl: string; secret: string }) => React.ReactNode }) {
-  const [secret, setSecret] = useState<string | null>(null);
+/**
+ * Gates the app on a valid httpOnly session cookie. Auth state is simply
+ * "logged in or not" — the runner secret never reaches the browser. All
+ * runner traffic goes through the server-side proxy at /api/runner.
+ */
+export function AuthGate({ children }: { children: (props: { baseUrl: string }) => React.ReactNode }) {
+  const [authed, setAuthed] = useState(false);
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    const stored = getRunnerSecret();
-    if (stored) {
-      initAPI(getRunnerUrl(), stored);
-      setSecret(stored);
-    }
-    setChecking(false);
+    checkSession()
+      .then((ok) => {
+        if (ok) {
+          initAPI();
+          setAuthed(true);
+        }
+      })
+      .finally(() => setChecking(false));
   }, []);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     try {
-      const res = await fetch("/api/auth", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password: input }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || "Invalid password");
+      const result = await login(input);
+      if (!result.ok) {
+        setError(result.error || "Invalid password");
         return;
       }
-      const { runnerSecret } = await res.json();
-      setRunnerSecret(runnerSecret);
-      initAPI(getRunnerUrl(), runnerSecret);
-      setSecret(runnerSecret);
-    } catch {
+      initAPI();
+      setAuthed(true);
+    } catch (err) {
+      console.warn("[auth] Login request failed:", err);
       setError("Cannot reach dashboard server");
     }
   }, [input]);
 
   if (checking) return null;
 
-  if (!secret) {
+  if (!authed) {
     return (
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
         <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4 p-8">
@@ -79,7 +73,7 @@ export function AuthGate({ children }: { children: (props: { baseUrl: string; se
     );
   }
 
-  return <>{children({ baseUrl: getRunnerUrl(), secret })}</>;
+  return <>{children({ baseUrl: API_BASE })}</>;
 }
 
 export { clearAuth };

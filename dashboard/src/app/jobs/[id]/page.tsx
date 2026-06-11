@@ -10,8 +10,8 @@ import { useJob } from "@/hooks/useJobs";
 import { useSSE } from "@/lib/sse";
 import Link from "next/link";
 
-function JobPage({ id, baseUrl, secret }: { id: string; baseUrl: string; secret: string }) {
-  const { jobProgress } = useSSE(baseUrl, secret); // Wire SSE for real-time updates
+function JobPage({ id }: { id: string }) {
+  const { jobProgress } = useSSE(); // Wire SSE for real-time updates
   const { data: job, isLoading } = useJob(id);
 
   // Get live progress events for this specific job
@@ -23,7 +23,7 @@ function JobPage({ id, baseUrl, secret }: { id: string; baseUrl: string; secret:
       {isLoading || !job ? (
         <div className="flex justify-center py-20"><Spinner size="lg" /></div>
       ) : (
-        <JobDetail job={job} baseUrl={baseUrl} secret={secret} liveProgress={liveProgress} />
+        <JobDetail job={job} liveProgress={liveProgress} />
       )}
     </div>
   );
@@ -33,13 +33,13 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   return (
     <AuthGate>
-      {({ baseUrl, secret }) => (
+      {({ baseUrl }) => (
         <div className="flex min-h-screen">
           <Sidebar />
           <div className="flex-1 flex flex-col">
             <Header baseUrl={baseUrl} />
             <main className="flex-1 p-6">
-              <JobPage id={id} baseUrl={baseUrl} secret={secret} />
+              <JobPage id={id} />
             </main>
           </div>
         </div>

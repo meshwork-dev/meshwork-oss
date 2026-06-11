@@ -13,10 +13,8 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 
-export function JobDetail({ job, baseUrl, secret, liveProgress }: {
+export function JobDetail({ job, liveProgress }: {
   job: Job;
-  baseUrl?: string;
-  secret?: string;
   liveProgress?: JobProgress[];
 }) {
   const router = useRouter();
@@ -25,6 +23,7 @@ export function JobDetail({ job, baseUrl, secret, liveProgress }: {
   const [loading, setLoading] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (job.status === "succeeded" || job.status === "failed") {
@@ -40,7 +39,9 @@ export function JobDetail({ job, baseUrl, secret, liveProgress }: {
       // Fetch existing stream events for running jobs (catches up with activity before page load)
       getAPI()?.getStreamEvents(job.id).then((stream) => {
         if (stream?.events) setStreamEvents(stream.events);
-      }).catch(() => {});
+      }).catch((err) => {
+        console.warn(`[job-detail] Failed to load stream events for job ${job.id}:`, err);
+      });
     }
   }, [job.id, job.status]);
 
@@ -50,22 +51,30 @@ export function JobDetail({ job, baseUrl, secret, liveProgress }: {
   async function handleCancel() {
     if (!confirm("Cancel this job?")) return;
     setCancelling(true);
+    setActionError(null);
     try {
       await getAPI()?.cancelJob(job.id);
       mutate(`job:${job.id}`);
       mutate("jobs");
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn(`[job-detail] Failed to cancel job ${job.id}:`, err);
+      setActionError("Failed to cancel job. Please try again.");
+    }
     setCancelling(false);
   }
 
   async function handleRetry() {
     setRetrying(true);
+    setActionError(null);
     try {
       const result = await getAPI()?.retryJob(job.id);
       if (result?.jobId) {
         router.push(`/jobs/${result.jobId}`);
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn(`[job-detail] Failed to retry job ${job.id}:`, err);
+      setActionError("Failed to retry job. Please try again.");
+    }
     setRetrying(false);
   }
 
@@ -213,8 +222,12 @@ export function JobDetail({ job, baseUrl, secret, liveProgress }: {
         <LiveActivity progress={liveProgress} />
       )}
 
+      {actionError && (
+        <p className="text-xs text-red-400">{actionError}</p>
+      )}
+
       {/* Live log for active jobs */}
-      {isActive && baseUrl && secret && (
+      {isActive && (
         <LiveLog jobId={job.id} jobStatus={job.status} />
       )}
 

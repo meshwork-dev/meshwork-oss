@@ -139,31 +139,32 @@ function hashString(s: string): number {
 /* Data hook                                                           */
 /* ------------------------------------------------------------------ */
 
-function useOfficeData(baseUrl: string, secret: string) {
+function useOfficeData(baseUrl: string) {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    const headers = { "x-runner-secret": secret };
     const load = async () => {
       try {
         const [aRes, mRes, jRes] = await Promise.all([
-          fetch(`${baseUrl}/agents`, { headers }),
-          fetch(`${baseUrl}/api/meetings`, { headers }),
-          fetch(`${baseUrl}/jobs?limit=50&status=running`, { headers }),
+          fetch(`${baseUrl}/agents`),
+          fetch(`${baseUrl}/api/meetings`),
+          fetch(`${baseUrl}/jobs?limit=50&status=running`),
         ]);
         if (cancelled) return;
         if (aRes.ok) { const j = await aRes.json(); setAgents(j.agents ?? []); }
         if (mRes.ok) { const j = await mRes.json(); setMeetings(j.meetings ?? j ?? []); }
         if (jRes.ok) { const j = await jRes.json(); setJobs(j.jobs ?? j ?? []); }
-      } catch { /* retry */ }
+      } catch (err) {
+        console.warn("[office] Failed to load office data (will retry):", err);
+      }
     };
     load();
     const iv = setInterval(load, 4000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [baseUrl, secret]);
+  }, [baseUrl]);
 
   const nodes = useMemo<AgentNode[]>(() => {
     const activeMeetings = meetings.filter((m) => (m.status ?? "active") !== "ended");
@@ -1274,16 +1275,14 @@ function FirstPersonRig({ onExit }: { onExit: () => void }) {
 
 function SceneContent({
   baseUrl,
-  secret,
   mode,
   onExitFP,
 }: {
   baseUrl: string;
-  secret: string;
   mode: ViewMode;
   onExitFP: () => void;
 }) {
-  const { nodes, meetings } = useOfficeData(baseUrl, secret);
+  const { nodes, meetings } = useOfficeData(baseUrl);
   const placements = useMemo(() => layoutAgents(nodes), [nodes]);
 
   const summary = useMemo(() => {
@@ -1439,7 +1438,7 @@ function SceneContent({
 /* Top-level export                                                    */
 /* ------------------------------------------------------------------ */
 
-export default function OfficeScene({ baseUrl, secret }: { baseUrl: string; secret: string }) {
+export default function OfficeScene({ baseUrl }: { baseUrl: string }) {
   const [mode, setMode] = useState<ViewMode>("orbit");
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -1458,7 +1457,7 @@ export default function OfficeScene({ baseUrl, secret }: { baseUrl: string; secr
         }}
       >
         <Suspense fallback={null}>
-          <SceneContent baseUrl={baseUrl} secret={secret} mode={mode} onExitFP={exitFP} />
+          <SceneContent baseUrl={baseUrl} mode={mode} onExitFP={exitFP} />
         </Suspense>
       </Canvas>
 

@@ -91,6 +91,7 @@ const JOB_CAMEL_TO_SNAKE = {
   retryCount: "retry_count",
   maxRetries: "max_retries",
   retryAt: "retry_at",
+  heartbeatAt: "heartbeat_at",
   qualityGate: "quality_gate",
   qualityGateFailure: "quality_gate_failure",
   qualityGateRetryCount: "quality_gate_retry_count",
@@ -150,6 +151,7 @@ const JOB_DB_COLUMNS = new Set([
   "retry_count",
   "max_retries",
   "retry_at",
+  "heartbeat_at",
   "quality_gate",
   "quality_gate_failure",
   "quality_gate_retry_count",
@@ -845,6 +847,9 @@ const MIGRATIONS = [
   `ALTER TABLE meetings ADD COLUMN IF NOT EXISTS gate_before_dispatch BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE meetings ADD COLUMN IF NOT EXISTS awaiting_approval BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE meetings ADD COLUMN IF NOT EXISTS awaiting_approval_since TIMESTAMPTZ`,
+
+  // 018 — job heartbeat (stale-job recovery: detect jobs whose runner died mid-execution)
+  `ALTER TABLE jobs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`,
 ];
 
 async function runMigrations(client) {
@@ -1006,6 +1011,34 @@ const jobsRepo = {
     const { rows } = await pool.query(
       `SELECT * FROM jobs WHERE status IN (${placeholders.join(", ")}) ORDER BY created_at DESC`,
       statuses
+    );
+    return rows.map(rowToJob);
+  },
+
+  /**
+   * Bump heartbeat_at for the given running jobs (stale-job recovery).
+   * @param {string[]} jobIds
+   */
+  async touchHeartbeat(jobIds) {
+    if (!jobIds || jobIds.length === 0) return;
+    await pool.query(
+      "UPDATE jobs SET heartbeat_at = NOW() WHERE job_id = ANY($1)",
+      [jobIds]
+    );
+  },
+
+  /**
+   * Find jobs stuck in 'running' whose heartbeat (falling back to started_at /
+   * created_at for rows written before the heartbeat column existed) is older
+   * than maxAgeMinutes.
+   */
+  async findStaleRunning(maxAgeMinutes) {
+    const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000).toISOString();
+    const { rows } = await pool.query(
+      `SELECT * FROM jobs
+       WHERE status = 'running'
+         AND COALESCE(heartbeat_at, started_at, created_at) < $1`,
+      [cutoff]
     );
     return rows.map(rowToJob);
   },
@@ -1877,6 +1910,27 @@ const conversationsRepo = {
 };
 
 // ---------------------------------------------------------------------------
+// retention pruning (RETENTION_DAYS)
+// ---------------------------------------------------------------------------
+
+const retentionRepo = {
+  /**
+   * Delete old data beyond the retention window:
+   *   - jobs in terminal states finished more than maxAgeDays ago
+   *   - conversations untouched for maxAgeDays
+   *   - read notifications older than maxAgeDays
+   * Returns per-table deleted row counts.
+   */
+  async prune(maxAgeDays) {
+    const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
+    const jobs = await jobsRepo.pruneTerminal(maxAgeDays);
+    const conversations = await conversationsRepo.pruneStale(cutoff);
+    const notifications = await notificationsRepo.prune(maxAgeDays);
+    return { jobs, conversations, notifications };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -1900,6 +1954,7 @@ module.exports = {
   issueTransitions: issueTransitionsRepo,
   notifications: notificationsRepo,
   conversations: conversationsRepo,
+  retention: retentionRepo,
   // Exposed for testing / advanced use
   _helpers: { camelToSnake, snakeToCamel, jobToRow, rowToJob, pipelineToRow, rowToPipeline },
 };
