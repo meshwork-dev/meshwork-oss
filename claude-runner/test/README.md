@@ -13,7 +13,11 @@ npm test
   If a container from a previous test run is still up it is reused; each run
   creates (and drops) its own fresh database inside it.
   When Docker is unavailable the integration tests **skip** with a clear
-  message; the unit tests (`test/unit.test.mjs`) still run.
+  message; the unit tests (`test/unit.test.mjs`, `test/protocol.test.mjs`)
+  still run. `protocol.test.mjs` covers gate verdict parsing,
+  `[CREATE-SUBTASKS]` block parsing, untrusted-input prompt fencing, callback
+  HMAC signing, DB transient-error classification, and the guard_bash egress
+  filter (the last skips without `python3`).
 - No real Claude CLI is ever executed: `config.claude.command` is pointed at a
   stub script that exits immediately, and `HOME` is redirected to an empty
   temp dir so the runner never reads or refreshes your real

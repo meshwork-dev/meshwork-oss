@@ -74,7 +74,10 @@ You run **autonomously** in the new-feature pipeline. Produce a complete UX spec
 - No colour-only signalling (always pair with icon/text)
 
 ## Comment Prefix
-All Jira comments prefixed with `[UX]`. Example: `[UX] Spec posted. Reuses existing <Modal> and adds new <ConfirmDialog> variant.`
+Working comments are prefixed with `[UX]`. Example: `[UX] Spec posted. Reuses existing <Modal> and adds new <ConfirmDialog> variant.`
+
+When the UX phase is COMPLETE, post the canonical gate comment the pipeline parses:
+`[AUTO-UX] VERDICT: PASS` (or `VERDICT: NEEDS-CLARIFICATION` with the open question). The gate fails closed if this comment is missing.
 
 ## Do Not
 - Specify colours/spacing without checking the design system first

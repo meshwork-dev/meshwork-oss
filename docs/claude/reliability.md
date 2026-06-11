@@ -28,6 +28,57 @@ New jobs are rejected with `429 budget-exceeded` if daily or hourly cost limits 
 }
 ```
 
+### Admission Control (queue backpressure)
+`POST /run`, `/chat`, `/agent`, and `/pipeline` return `429 queue-full` (with
+`retry-after`) once the in-memory queue reaches `maxQueueDepth` (default 200,
+`MAX_QUEUE_DEPTH` env; 0 disables). Concurrency caps gate execution; this gates
+admission, so a submission flood degrades instead of growing memory unbounded.
+
+### Outbound HTTP Timeouts
+All runner-originated HTTP (callbacks, alerts, Jira API) carries a hard timeout
+(`outboundHttpTimeoutMs`, default 30s; Jira: `jira.timeoutMs` + transient retry
+with backoff via `jira.maxRetries`, default 2). Dead endpoints can no longer
+accumulate hanging sockets.
+
+### Signed Callbacks
+Every runner callback carries `x-meshwork-timestamp` and `x-meshwork-signature`
+(HMAC-SHA256 of `timestamp.body` keyed with `RUNNER_SECRET`). The N8N webhook
+workflows ship with a "Verify caller" node that validates this signature (or a
+shared token for external callers) — see SECURITY.md for enabling enforcement.
+
+### DB Transient-Error Retry & Persist Escalation
+`pool.query` retries transient Postgres/network errors (connection drops,
+failovers, deadlocks) up to 3 times with backoff. Terminal-job persistence
+failures additionally schedule a delayed retry, emit `job:persist-failed`, and
+keep the job in memory plus its meta file on disk — a DB blip no longer makes a
+finished job invisible to history and the stale-job sweep.
+
+### Shared Lessons (cross-agent learning)
+Quality-gate failures and review/QA findings are appended to
+`~/claude-runner-logs/lessons/LESSONS.md` (size-capped). The most recent tail
+is injected into prompts for code-writing agents (`lessons.agents`, default
+implementer/ui/e2e/qa) so the same failure class isn't rediscovered on every
+issue. Disable with `lessons.enabled: false`.
+
+### Postgres Backup & Restore
+Postgres holds all job history, pipeline state, conversations, and N8N state.
+Back it up nightly:
+```bash
+# cron: 0 3 * * *
+./scripts/backup-postgres.sh            # dumps runner + n8n DBs, keeps newest 14
+```
+Restore:
+```bash
+docker compose --profile bundled-db up -d postgres
+gunzip -c backups/runner-YYYYMMDD-HHMMSS.sql.gz | \
+  docker compose exec -T postgres psql -U runner -d runner
+gunzip -c backups/n8n-YYYYMMDD-HHMMSS.sql.gz | \
+  docker compose exec -T postgres psql -U n8n -d n8n
+docker compose --profile bundled-db up -d   # start the rest of the stack
+```
+External-Postgres mode: run `pg_dump`/`psql` against your own host (the script
+prints the exact command). Retention: `BACKUP_RETENTION_COUNT` (default 14).
+
 ## Hooks System
 
 The plugin includes Claude Code hooks that run during agent sessions.

@@ -16,6 +16,36 @@ function runnerBaseUrl(): string {
   return (process.env.RUNNER_URL || "http://localhost:3210").replace(/\/+$/, "");
 }
 
+/**
+ * Only known runner API surfaces are proxied. Anything else — notably
+ * /internal/* (the runner's subprocess-only consult endpoint) and any
+ * future admin endpoints — is rejected instead of blindly forwarded.
+ * Extend per-deployment with RUNNER_PROXY_EXTRA_PREFIXES (comma-separated
+ * first path segments).
+ */
+const ALLOWED_PATH_PREFIXES = new Set([
+  "agent",
+  "agents",
+  "api",
+  "batches",
+  "chat",
+  "dashboard",
+  "events",
+  "health",
+  "jobs",
+  "meeting",
+  "meetings",
+  "pipeline",
+  "pipelines",
+  "run",
+  "schedule",
+  "scheduled",
+  ...(process.env.RUNNER_PROXY_EXTRA_PREFIXES || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+]);
+
 async function proxy(
   req: NextRequest,
   ctx: { params: Promise<{ path: string[] }> }
@@ -33,6 +63,13 @@ async function proxy(
   }
 
   const { path } = await ctx.params;
+
+  if (!path?.length || !ALLOWED_PATH_PREFIXES.has(path[0])) {
+    return Response.json(
+      { error: `Path not allowed through runner proxy: /${(path || []).join("/")}` },
+      { status: 403 }
+    );
+  }
 
   // Preserve the original query string, but never forward any client-supplied
   // secret to (or beyond) the runner.

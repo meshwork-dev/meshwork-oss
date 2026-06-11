@@ -124,6 +124,36 @@ curl -H "x-runner-secret: $SECRET" http://localhost:3210/jobs/<jobId>/output
 | `[AUTO-TROUBLESHOOT]` | ask-dave-agent | Problem diagnosed and resolved |
 | `[AUTO-E2E-COMPLETE]` | e2e-builder | End-to-end build complete |
 
+### Verdict Lines (required for gated comments)
+
+Pipeline gates no longer pass on prefix presence alone. Every gated `[AUTO-*]`
+comment MUST include an explicit verdict the runner can parse, in one of these
+forms (markdown bold tolerated):
+
+```
+[AUTO-VERIFY] VERDICT: PASS
+**Verdict:** APPROVED | CHANGES-REQUESTED | BLOCKED | FAIL | NEEDS-CLARIFICATION
+```
+
+Semantics:
+- `PASS` / `APPROVED` — gate passes, pipeline advances.
+- `FAIL` / `CHANGES-REQUESTED` / `BLOCKED` / `REJECTED` — gate fails; for
+  review-style phases (`verify`, `code-review`, `security-review`) the
+  pipeline loops the findings back to the implementer (fix-loop) instead of
+  failing outright.
+- `NEEDS-CLARIFICATION` — the agent cannot proceed without a human decision.
+  The pipeline halts and emits a `pipeline:needs-clarification` callback so
+  N8N routes the question to the PM/approval channel.
+
+A gated comment with no recognizable verdict **fails closed**
+(`gates.requireVerdict`, on by default). A succeeded job whose output never
+contained the prefix also fails the gate (the old trust-on-success fallback
+is opt-in via `gates.legacyTrustSucceededJob`).
+
+Working prefixes (`[BA]`, `[ARCH]`, `[UX]`, `[QA]`, `[SEC]`, `[IMPL]`, `[PM]`)
+are for narrative comments only — gates parse exclusively the canonical
+`[AUTO-*]` comments listed above.
+
 ## Subtask-Based Workflow (Primary Pattern)
 
 Agents create Jira subtasks to break down and delegate work. This replaces the legacy `[DISPATCH-ACTIONS]` pattern.

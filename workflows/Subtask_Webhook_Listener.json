@@ -284,6 +284,19 @@
       ],
       "id": "log-blocked",
       "name": "Log blocked status"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Meshwork webhook caller verification.\n// Accepts EITHER:\n//   1) the runner's HMAC signature (x-meshwork-signature over `${ts}.${body}`)\n//   2) a shared token in ?token= or the x-webhook-token header (for external\n//      callers like Jira webhook URLs)\n// Enforcement is off until WEBHOOK_VERIFICATION_ENFORCE=true in .env (values\n// are substituted at import time by scripts/import-workflows.sh).\nconst crypto = require('crypto');\n\nconst ENFORCE = '{{WEBHOOK_VERIFICATION_ENFORCE}}'.toLowerCase() === 'true';\nconst RUNNER_SECRET = '{{RUNNER_SECRET}}';\nconst SHARED_TOKEN = '{{WEBHOOK_SHARED_TOKEN}}';\n\nconst item = $input.first().json;\nconst headers = item.headers || {};\nconst query = item.query || {};\nconst body = item.body ?? {};\n\nconst isPlaceholder = (v) => !v || v.indexOf('{{') === 0;\nlet ok = false;\n\n// 1) Runner HMAC\nconst sig = headers['x-meshwork-signature'];\nconst ts = headers['x-meshwork-timestamp'];\nif (sig && ts && !isPlaceholder(RUNNER_SECRET)) {\n  const age = Math.abs(Date.now() - Number(ts));\n  if (age < 5 * 60 * 1000) {\n    const expected = 'sha256=' + crypto.createHmac('sha256', RUNNER_SECRET)\n      .update(ts + '.' + JSON.stringify(body)).digest('hex');\n    const a = crypto.createHash('sha256').update(expected).digest();\n    const b = crypto.createHash('sha256').update(String(sig)).digest();\n    if (crypto.timingSafeEqual(a, b)) ok = true;\n  }\n}\n\n// 2) Shared token\nif (!ok && !isPlaceholder(SHARED_TOKEN)) {\n  const provided = String(query.token || headers['x-webhook-token'] || '');\n  if (provided) {\n    const a = crypto.createHash('sha256').update(provided).digest();\n    const b = crypto.createHash('sha256').update(SHARED_TOKEN).digest();\n    if (crypto.timingSafeEqual(a, b)) ok = true;\n  }\n}\n\nif (!ok && ENFORCE) {\n  throw new Error('Webhook verification failed: missing or invalid signature/token. See SECURITY.md (webhook verification).');\n}\n\nreturn $input.all();\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        180,
+        -160
+      ],
+      "id": "62b6f5f3-516d-4cb3-b319-ccb451f57cee",
+      "name": "Verify caller"
     }
   ],
   "connections": {
@@ -291,7 +304,7 @@
       "main": [
         [
           {
-            "node": "Normalize subtask",
+            "node": "Verify caller",
             "type": "main",
             "index": 0
           }
@@ -394,6 +407,17 @@
         [
           {
             "node": "Trigger runner job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify caller": {
+      "main": [
+        [
+          {
+            "node": "Normalize subtask",
             "type": "main",
             "index": 0
           }

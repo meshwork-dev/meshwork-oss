@@ -275,6 +275,16 @@ generate_env() {
     env_set N8N_DB_PASSWORD "$(openssl rand -hex 16)"
   fi
 
+  # Webhook verification — token generated once; enforcement starts disabled
+  # so existing callers keep working until the operator adds ?token=... to
+  # Jira webhook URLs and flips WEBHOOK_VERIFICATION_ENFORCE=true.
+  if [[ -z "$(env_get WEBHOOK_SHARED_TOKEN)" ]]; then
+    env_set WEBHOOK_SHARED_TOKEN "$(openssl rand -hex 24)"
+  fi
+  if [[ -z "$(env_get WEBHOOK_VERIFICATION_ENFORCE)" ]]; then
+    env_set WEBHOOK_VERIFICATION_ENFORCE "false"
+  fi
+
   [[ -n "${JIRA_DOMAIN:-}" ]]                && env_set JIRA_DOMAIN                "$JIRA_DOMAIN"
   [[ -n "${JIRA_EMAIL:-}" ]]                 && env_set JIRA_EMAIL                 "$JIRA_EMAIL"
   [[ -n "${JIRA_API_TOKEN:-}" ]]             && env_set JIRA_API_TOKEN             "$JIRA_API_TOKEN"

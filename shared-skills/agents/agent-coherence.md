@@ -109,6 +109,29 @@ Check the `model:` field is one of: `Sonnet`, `Opus`, `Haiku`, `sonnet`, `opus`,
 
 If an agent lists `mcp__n8n-jira-mcp__*` tools but `skills:` references no backend/engineer skill — flag as potential misconfiguration. Jira tools make most sense paired with engineering or PM skills.
 
+#### 3f. Gate Prefix & Verdict Contract Check
+
+Pipeline gates parse canonical `[AUTO-*]` comments with explicit verdict lines
+(see docs/claude/agents.md "Verdict Lines"). Prefix drift between docs, agent
+definitions, and pipeline config silently breaks gates, so audit all three:
+
+1. Extract every `"prefix"` value from the runner config's `pipelines.*` gates:
+```bash
+grep -o '"prefix": "\[AUTO-[A-Z-]*\]"' <RUNNER_CONFIG_DIR>/config.json | sort -u
+```
+2. For each gate prefix, confirm the agent that owns the corresponding phase
+   instructs itself to post that exact prefix in its definition file.
+3. Confirm the agent instruction includes an explicit verdict vocabulary
+   (`VERDICT: PASS | FAIL | BLOCKED | CHANGES-REQUESTED | NEEDS-CLARIFICATION`).
+   An agent told only "post `[AUTO-X]`" with no verdict guidance will fail
+   closed at the gate.
+
+**Flag these issues (NEEDS-REVIEW):**
+- A gate prefix in config that no agent definition mentions
+- An agent posting a different prefix than the gate expects (e.g. `[ARCH]`
+  where the gate parses `[AUTO-ARCHITECTURE]`)
+- Gated comment instructions with no verdict line guidance
+
 ### Step 4: Classify Each Agent
 
 | Class | Issues Found | Action |

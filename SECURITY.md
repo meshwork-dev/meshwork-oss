@@ -61,10 +61,30 @@ Out of scope:
 Even with no known vulnerabilities, Meshwork executes Claude Code with broad permissions inside the working directory you point it at. Reduce blast radius:
 
 - Keep `RUNNER_SECRET` and `DASHBOARD_PASSWORD` private; rotate if leaked
-- Bind the runner and dashboard to `127.0.0.1` unless you trust your network
+- Ports bind to `127.0.0.1` by default (`BIND_ADDRESS` in `.env`). Only set
+  `BIND_ADDRESS=0.0.0.0` behind a TLS-terminating reverse proxy with ACLs
 - Restrict `ALLOWED_ROOTS` to the directories you want agents to touch
 - Don't commit `.env`, `.credentials.json`, N8N export bundles, or `products/<id>/product.json` if it contains tokens
 - Treat agent-generated PRs the same way you'd treat a junior engineer's PR — review before merge
+- **Enable webhook verification.** Every webhook workflow ships with a
+  "Verify caller" node that accepts either the runner's HMAC signature
+  (`x-meshwork-signature`, sent automatically on all runner callbacks) or the
+  shared token from `WEBHOOK_SHARED_TOKEN`. Add `?token=<WEBHOOK_SHARED_TOKEN>`
+  to your Jira webhook URLs, then set `WEBHOOK_VERIFICATION_ENFORCE=true` in
+  `.env` and re-import workflows (`./scripts/import-workflows.sh --force`).
+  Until enforcement is on, unauthenticated POSTs to exposed webhook paths can
+  trigger agent execution.
+- **Agent network egress is filtered.** `shared-skills/hooks/guard_bash.py`
+  blocks `curl`/`wget` to hosts outside an allowlist (package registries,
+  GitHub, Atlassian, the local stack). Extend with `MESHWORK_EGRESS_ALLOWLIST`
+  rather than disabling (`MESHWORK_EGRESS_ENFORCE=0`) — the filter is the main
+  brake on prompt-injection exfiltration.
+- **Untrusted input is fenced, not sanitised.** Issue summaries/descriptions
+  and chat messages are wrapped in `<untrusted-data>` markers in agent prompts.
+  This raises the bar for prompt injection but is a soft mitigation — keep
+  restricting who can write to your issue tracker and chat channels.
+- **Back up Postgres** (`./scripts/backup-postgres.sh`, cron-able) — it holds
+  all job history, pipeline state, and conversations.
 
 ## Trust Model & Deployment Guidance
 

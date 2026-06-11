@@ -44,11 +44,12 @@ function jiraBaseUrl() {
   return domain;
 }
 
-function jiraRequest(method, urlStr, body) {
+function jiraRequestOnce(method, urlStr, body) {
   return new Promise((resolve, reject) => {
     const u = new URL(urlStr);
     const lib = u.protocol === "https:" ? https : http;
     const payload = body ? Buffer.from(JSON.stringify(body), "utf8") : null;
+    const timeoutMs = Number(config?.jira?.timeoutMs || 30000);
     const headers = {
       authorization: jiraAuth(),
       "content-type": "application/json",
@@ -62,6 +63,7 @@ function jiraRequest(method, urlStr, body) {
         hostname: u.hostname,
         port: u.port || (u.protocol === "https:" ? 443 : 80),
         path: u.pathname + (u.search || ""),
+        timeout: timeoutMs,
         headers,
       },
       (res) => {
@@ -74,10 +76,38 @@ function jiraRequest(method, urlStr, body) {
         });
       }
     );
+    req.on("timeout", () => {
+      req.destroy(new Error(`Jira request timed out after ${timeoutMs}ms (${method} ${u.pathname})`));
+    });
     req.on("error", reject);
     if (payload) req.write(payload);
     req.end();
   });
+}
+
+/**
+ * Jira request with transient-error retry. Network errors, timeouts, 429 and
+ * 5xx responses are retried with exponential backoff; 4xx (except 429)
+ * resolve immediately so callers handle them as before.
+ * Only GETs and idempotent writes should rely on this; retries are capped low
+ * so a duplicate POST window stays narrow.
+ */
+async function jiraRequest(method, urlStr, body) {
+  const maxAttempts = Number(config?.jira?.maxRetries ?? 2) + 1;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await jiraRequestOnce(method, urlStr, body);
+      const retryable = res.statusCode === 429 || res.statusCode >= 500;
+      if (!retryable || attempt === maxAttempts) return res;
+      lastErr = new Error(`Jira responded ${res.statusCode}`);
+    } catch (e) {
+      lastErr = e;
+      if (attempt === maxAttempts) throw e;
+    }
+    await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 500)); // 1s, 2s
+  }
+  throw lastErr;
 }
 
 async function jiraGet(apiPath) {

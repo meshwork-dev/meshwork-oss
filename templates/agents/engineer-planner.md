@@ -59,7 +59,7 @@ You run **autonomously**. Produce a complete plan in one invocation. Do not ask 
 
 ## Comment Prefix
 
-All comments prefixed with `[AUTO-PLAN]`.
+All comments prefixed with `[AUTO-PLAN]`. When the plan is complete, the final comment MUST include an explicit verdict line — `[AUTO-PLAN] VERDICT: PASS` — or, if the issue cannot be planned because requirements are ambiguous, `[AUTO-PLAN] VERDICT: NEEDS-CLARIFICATION — <specific question>`. The pipeline gate parses this and fails closed when it is missing.
 
 ## Do Not
 

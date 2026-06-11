@@ -69,11 +69,15 @@ You run **autonomously** in the new-feature pipeline. Produce a complete design 
 2. Run `grep` / `glob` to map affected files in `__WORKING_DIR__`
 3. Sketch the design, then write it down
 4. Decide: ADR needed?
-5. Post `[ARCHITECTURE]` comment with `[ARCH]` prefix
+5. Post the design comment with `[ARCH]` prefix
 6. Write the ADR if needed
+7. Post the canonical gate comment: `[AUTO-ARCHITECTURE] VERDICT: PASS`
 
 ## Comment Prefix
-All Jira comments prefixed with `[ARCH]`. Example: `[ARCH] Design posted. ADR-0042 created for caching layer.`
+Working comments are prefixed with `[ARCH]`. Example: `[ARCH] Design posted. ADR-0042 created for caching layer.`
+
+When the architecture phase is COMPLETE, post the canonical gate comment the pipeline parses:
+`[AUTO-ARCHITECTURE] VERDICT: PASS` (or `VERDICT: NEEDS-CLARIFICATION` with the open question). The gate fails closed if this comment is missing.
 
 ## Do Not
 - Skip codebase inspection ("I'll assume the pattern is X")

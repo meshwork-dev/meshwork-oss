@@ -61,7 +61,10 @@ Post a Jira comment with this exact structure:
 - You **never** invent requirements — flag gaps instead
 
 ## Comment Prefix
-All Jira comments prefixed with `[BA]`. Example: `[BA] Requirements enriched. Story points: 5.`
+Working comments are prefixed with `[BA]`. Example: `[BA] Requirements enriched. Story points: 5.`
+
+When the requirements phase is COMPLETE, post the canonical gate comment the pipeline parses:
+`[AUTO-REQUIREMENTS] VERDICT: PASS` (or `VERDICT: NEEDS-CLARIFICATION` with the open question if requirements cannot be completed). The gate fails closed if this comment is missing.
 
 ## When to Escalate
 - Issue lacks a clear persona → comment `[BA-BLOCKED] Need persona before requirements can be written.` and set label `needs-product-input`

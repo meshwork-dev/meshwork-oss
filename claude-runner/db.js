@@ -861,6 +861,60 @@ async function runMigrations(client) {
 }
 
 // ---------------------------------------------------------------------------
+// Transient-error query retry
+// ---------------------------------------------------------------------------
+
+/**
+ * Postgres/network error codes worth retrying: connection drops, failovers,
+ * admin restarts, serialization conflicts. Anything else (syntax errors,
+ * constraint violations, …) rethrows immediately.
+ */
+const TRANSIENT_PG_CODES = new Set([
+  "57P01", // admin_shutdown
+  "57P02", // crash_shutdown
+  "57P03", // cannot_connect_now
+  "08000", "08001", "08003", "08004", "08006", // connection_exception family
+  "40001", // serialization_failure
+  "40P01", // deadlock_detected
+  "53300", // too_many_connections
+]);
+const TRANSIENT_NET_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "EAI_AGAIN"]);
+
+function isTransientDbError(err) {
+  if (!err) return false;
+  if (err.code && (TRANSIENT_PG_CODES.has(err.code) || TRANSIENT_NET_CODES.has(err.code))) return true;
+  const msg = String(err.message || "");
+  return /Connection terminated|connection closed|timeout exceeded when trying to connect/i.test(msg);
+}
+
+/**
+ * Wrap pool.query so transient failures (a Postgres restart, a dropped
+ * connection) are retried with short backoff instead of immediately failing
+ * the job that triggered the write. Bounded to ~3.5s so callers don't hang.
+ */
+function installQueryRetry(p, config = {}) {
+  const rawQuery = p.query.bind(p);
+  const maxAttempts = Number(config.database?.queryRetries ?? 3);
+  const baseDelayMs = Number(config.database?.queryRetryDelayMs ?? 500);
+
+  p.query = async function retryingQuery(...args) {
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await rawQuery(...args);
+      } catch (err) {
+        lastErr = err;
+        if (!isTransientDbError(err) || attempt === maxAttempts) throw err;
+        const delay = baseDelayMs * Math.pow(2, attempt - 1); // 500ms, 1s, 2s
+        console.warn(`[db] Transient query error (attempt ${attempt}/${maxAttempts}): ${err.message} — retrying in ${delay}ms`);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+    throw lastErr;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // init()
 // ---------------------------------------------------------------------------
 
@@ -890,6 +944,7 @@ async function init(config = {}) {
   );
 
   pool = new Pool(dbConfig);
+  installQueryRetry(pool, config);
 
   // Retry loop — up to 30 seconds with exponential backoff
   const maxAttempts = 6; // 1s + 2s + 4s + 8s + 15s ≈ 30s total wait
@@ -1956,5 +2011,5 @@ module.exports = {
   conversations: conversationsRepo,
   retention: retentionRepo,
   // Exposed for testing / advanced use
-  _helpers: { camelToSnake, snakeToCamel, jobToRow, rowToJob, pipelineToRow, rowToPipeline },
+  _helpers: { camelToSnake, snakeToCamel, jobToRow, rowToJob, pipelineToRow, rowToPipeline, isTransientDbError, installQueryRetry },
 };

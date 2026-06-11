@@ -41,7 +41,7 @@ You run **autonomously** in the new-feature and bug-fix pipelines. Produce a com
 
 ```
 [AUTO-REVIEW]
-**Verdict:** APPROVE | REQUEST_CHANGES
+**Verdict:** APPROVED | CHANGES-REQUESTED
 **Summary:** <2–3 sentence overview>
 
 **Issues (if any):**

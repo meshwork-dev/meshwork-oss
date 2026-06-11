@@ -3,6 +3,23 @@
 
 ## N8N Workflows
 
+### Webhook Verification ("Verify caller" nodes)
+
+Every webhook-triggered workflow begins with a **Verify caller** Code node
+inserted directly after the Webhook node. It accepts either:
+
+1. The runner's HMAC signature — all runner callbacks carry
+   `x-meshwork-timestamp` + `x-meshwork-signature` (HMAC-SHA256 of
+   `timestamp.body` keyed with `RUNNER_SECRET`), verified automatically.
+2. The shared token from `WEBHOOK_SHARED_TOKEN` — for external callers (Jira
+   webhook URLs), passed as `?token=...` or an `x-webhook-token` header.
+
+Enforcement is controlled by `WEBHOOK_VERIFICATION_ENFORCE` in `.env`
+(default `false` = log-only, so nothing breaks before tokens are configured).
+Values are substituted at import time by `./scripts/import-workflows.sh`; the
+N8N container needs `NODE_FUNCTION_ALLOW_BUILTIN=crypto` (set in the compose
+template). See SECURITY.md for the enablement checklist.
+
 ### Core Workflows
 - **Jira_Actuator.json** - MCP-based Jira AND Confluence operations (issues, comments, transitions, pages, subtasks, issue links)
 - **Jira_Webhook_Listener.json** - Webhook listener with idempotency, routes to agents or pipelines based on issue characteristics and labels. Issues with `needs-requirements` or `needs-ux-design` labels are routed to `POST /pipeline` (new-feature pipeline). Security-labeled bugs go to the security-fix pipeline. All other issues follow the existing direct dispatch path.

@@ -175,7 +175,7 @@ let configWasBackedUp = false;
 let configExisted = false;
 
 /** Write the temporary test config.json (backing up any real one). */
-export function writeTestConfig(port, ws) {
+export function writeTestConfig(port, ws, extraConfig = {}) {
   if (!configWasBackedUp) {
     configExisted = fs.existsSync(CONFIG_PATH);
     if (configExisted) fs.copyFileSync(CONFIG_PATH, CONFIG_BACKUP);
@@ -197,6 +197,7 @@ export function writeTestConfig(port, ws) {
     subtasks: { enabled: false },
     chrome: { enabled: false },
     fixLoop: { enabled: false },
+    ...extraConfig,
   };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
 }
@@ -216,9 +217,9 @@ export function restoreConfig() {
  * Spawn `node runner.js` against the test Postgres and wait until both the
  * HTTP server and the DB-backed routes are ready.
  */
-export async function startRunner(dbCfg, ws, { port } = {}) {
+export async function startRunner(dbCfg, ws, { port, extraConfig } = {}) {
   const runnerPort = port || (await freePort());
-  writeTestConfig(runnerPort, ws);
+  writeTestConfig(runnerPort, ws, extraConfig);
 
   const env = { ...process.env };
   // Make sure nothing from the developer's environment leaks into the runner.

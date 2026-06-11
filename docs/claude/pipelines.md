@@ -26,9 +26,39 @@ The runner includes a pipeline engine that sequences SDLC phases as isolated, re
 
 | Gate | Evaluation |
 |------|------------|
-| `comment-prefix` | Job output contains the expected `[AUTO-*]` prefix |
+| `comment-prefix` | Job output contains the expected `[AUTO-*]` prefix **and a parseable verdict** (see below) |
 | `quality-gate` | `job.qualityGate.passed === true` |
 | `file-exists` | Specified file exists in working directory |
+
+### Verdict Parsing (comment-prefix gates)
+
+Gates fail closed. Within 600 characters of the prefix the runner looks for an
+explicit verdict (`VERDICT: PASS`, `**Verdict:** APPROVED`, `[AUTO-VERIFY] PASS`, …):
+
+- **Positive** (`PASS`, `APPROVED`, `OK`, `SUCCESS`, …) → gate passes.
+- **Negative** (`FAIL`, `CHANGES-REQUESTED`, `BLOCKED`, `REJECTED`) → gate fails.
+  For phases listed in `fixLoop.fixablePhases` (default: `verify`,
+  `code-review`, `security-review`) the pipeline re-dispatches the
+  **implementation** phase with the findings as fix context (up to
+  `fixLoop.maxVerifyAttempts` cycles), then re-runs the failed phase. The
+  findings are also appended to the shared lessons file.
+- **`NEEDS-CLARIFICATION`** → the pipeline halts immediately (no retry, no
+  fix-loop), preserves the branch, and sends a `pipeline:needs-clarification`
+  callback containing the agent's question so N8N can route it to a human.
+- **No recognizable verdict** → gate fails (`gates.requireVerdict`, default
+  `true`; set `false` to accept bare prefixes).
+- **Prefix absent entirely** → gate fails, even when the job exited
+  successfully. The legacy trust-on-success behaviour is available via
+  `gates.legacyTrustSucceededJob: true` but defeats the purpose of gates.
+
+### Independent Post-Team Review
+
+When Agent Teams is enabled, teammate reviewers share the lead's conversation
+context — and therefore its blind spots. With `teams.independentReview`
+(default `true`), every successful team-lead delivery session dispatches a
+separate isolated job for `teams.independentReviewAgent` (default
+`engineer-reviewer`) that reviews the actual code with the team's claims
+explicitly marked as unverified.
 
 ### Context Bridge
 
