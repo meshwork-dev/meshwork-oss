@@ -21,6 +21,14 @@ const {
   wrapUntrusted,
   signCallbackPayload,
 } = require("./lib/protocol");
+const {
+  validateObservations,
+  evaluateObservationPolicy,
+  compareFindings,
+  renderObservationsComment,
+  extractObservationsBlock,
+  sampledForVerification,
+} = require("./lib/observations");
 
 // Optional "big brother" router (the-loop) is only loaded if installed alongside the runner.
 let registerBigBrotherRoutes = null;
@@ -199,7 +207,29 @@ function loadConfig() {
       requireVerdict: fileConfig.gates?.requireVerdict !== false,
       // Legacy behaviour: pass the gate when the job succeeded even if the
       // prefix never appeared in output. Off by default — gates fail closed.
-      legacyTrustSucceededJob: fileConfig.gates?.legacyTrustSucceededJob === true
+      legacyTrustSucceededJob: fileConfig.gates?.legacyTrustSucceededJob === true,
+      // Structured observations: gates with `structured: true` in their
+      // pipeline definition compute the verdict from agent-submitted
+      // observations via the thin policy layer instead of parsing the
+      // agent's self-issued verdict. Dual-run: with no observations the
+      // legacy prefix path applies, unless `require` forces fail-closed.
+      structuredObservations: {
+        enabled: fileConfig.gates?.structuredObservations?.enabled !== false,
+        require: fileConfig.gates?.structuredObservations?.require === true,
+        policy: fileConfig.gates?.structuredObservations?.policy || { failOnSeverity: "critical", failOnAcGap: true }
+      }
+    },
+
+    // Verification sampling: adversarial second reviews on a sample of passed
+    // review gates. Measures the overturn rate (escaped-defect instrumentation)
+    // — never blocks or advances pipelines.
+    verification: {
+      enabled: fileConfig.verification?.enabled !== false,
+      sampleRate: fileConfig.verification?.sampleRate ?? 0.1,
+      phases: fileConfig.verification?.phases || ["code-review"],
+      triggerOnZeroFindings: fileConfig.verification?.triggerOnZeroFindings !== false,
+      agent: fileConfig.verification?.agent || "engineer-reviewer",
+      model: fileConfig.verification?.model || "sonnet"
     },
 
     // Shared cross-agent lessons file (institutional memory). Gate failures and
@@ -4950,7 +4980,21 @@ function buildPipelinePrompt(pipeline, phase, basePrompt) {
   parts.push("");
 
   if (phase.gate) {
-    if (phase.gate.type === "comment-prefix") {
+    if (phase.gate.type === "comment-prefix" && phase.gate.structured && config.gates?.structuredObservations?.enabled !== false) {
+      parts.push(
+        `## Structured Observations (how this gate is decided)`,
+        `Do NOT issue a verdict — the pipeline engine computes the gate verdict from your structured observations and posts the ${phase.gate.prefix} audit comment itself. Your job is to report findings honestly; policy decides.`,
+        ``,
+        `End your FINAL output with exactly one observations block:`,
+        ``,
+        `[OBSERVATIONS]`,
+        `{ "gate": "${phase.name}", "findings": [{ "severity": "critical|major|minor|info", "title": "<short>", "file": "<path>", "line": <n>, "detail": "<what and why>", "evidence": "<how you know>" }], "acChecks": [{ "id": "AC1", "status": "met|gap|partial", "evidence": "<test or file:line>" }], "summary": "<2-3 sentence prose summary>" }`,
+        `[/OBSERVATIONS]`,
+        ``,
+        `Rules: valid JSON only inside the block; every finding needs a severity you would defend and file:line evidence; every AC check needs evidence; an empty findings array is a legitimate result if you genuinely found nothing. Zero findings on a substantial diff triggers an independent second review — report what you actually found, not what passes.`,
+        `Do not also post a "${phase.gate.prefix} VERDICT:" comment — the engine posts the audit comment from your observations. Only if you CANNOT produce the block should you fall back to the legacy "${phase.gate.prefix} VERDICT: <PASS|FAIL|CHANGES-REQUESTED|BLOCKED|NEEDS-CLARIFICATION>" line in your output (the gate fails closed without one of the two).`
+      );
+    } else if (phase.gate.type === "comment-prefix") {
       parts.push(
         `When done, post a Jira comment starting with: ${phase.gate.prefix}`,
         `CRITICAL: the comment (and your final output) MUST include an explicit verdict line in the form "${phase.gate.prefix} VERDICT: <verdict>".`,
@@ -4963,6 +5007,24 @@ function buildPipelinePrompt(pipeline, phase, basePrompt) {
       parts.push(`When done, ensure file exists: ${phase.gate.file}`);
     }
     parts.push("");
+  }
+
+  // Structured blackboard: prior phases' observations flow forward as facts
+  // alongside the prose context bridge (records for engine-checkable facts,
+  // prose for nuance — neither replaces the other).
+  const priorObs = (pipeline.phases || [])
+    .filter(p => p.status === "completed" && p.observations?.findings?.length >= 0 && (p.observations.findings.length > 0 || (p.observations.acChecks || []).length > 0))
+    .map(p => ({
+      phase: p.name,
+      findings: p.observations.findings.slice(0, 15),
+      acChecks: (p.observations.acChecks || []).slice(0, 20),
+    }));
+  if (priorObs.length > 0) {
+    let obsJson = JSON.stringify(priorObs, null, 1);
+    if (obsJson.length > 4000) obsJson = obsJson.slice(0, 4000) + "\n…(truncated)";
+    parts.push("## Prior Phase Observations (structured)");
+    parts.push("Findings and AC checks recorded by earlier phases of this pipeline:");
+    parts.push("```json", obsJson, "```", "");
   }
 
   // Fix-loop: inject error context from previous failed attempt
@@ -5194,11 +5256,43 @@ function evaluateGate(pipeline, phase, job) {
   }
 
   if (gate.type === "comment-prefix") {
+    const gatesCfg = config.gates || {};
+
+    // Structured observations path: when the gate opts in (gate.structured)
+    // and the agent submitted observations, the ENGINE computes the verdict
+    // via the thin policy layer — the agent does not get a vote. Dual-run:
+    // with no observations submitted, fall through to legacy prefix parsing
+    // unless structuredObservations.require is set (fail closed).
+    const structCfg = gatesCfg.structuredObservations || {};
+    if (gate.structured && structCfg.enabled !== false) {
+      if (job.observations) {
+        const product = resolveProduct(pipeline.workingDir);
+        const policy = product?.observationPolicy || structCfg.policy || {};
+        const policyResult = evaluateObservationPolicy(job.observations, policy);
+        return {
+          passed: policyResult.passed,
+          verdict: policyResult.verdict,
+          structured: true,
+          policyResult,
+          reason: policyResult.passed
+            ? `Engine-computed PASS from ${job.observations.findings.length} finding(s) within policy floors`
+            : `Engine-computed ${policyResult.verdict}: ${policyResult.reasons.join("; ")}`,
+        };
+      }
+      if (structCfg.require) {
+        return {
+          passed: false,
+          verdict: null,
+          reason: `Gate requires structured observations but none were submitted (POST /jobs/:id/observations or .meshwork/observations.json). Gates fail closed.`,
+        };
+      }
+      // fall through to legacy prefix parsing (dual-run)
+    }
+
     // Check job output for the required prefix + an explicit verdict
     const result = job.parsedOutput?.result || "";
     const stdout = job.stdout || "";
     const searchText = result + stdout;
-    const gatesCfg = config.gates || {};
     const { found, verdict } = extractGateVerdict(searchText, gate.prefix);
 
     if (found) {
@@ -5254,6 +5348,256 @@ function evaluateGate(pipeline, phase, job) {
   }
 
   return { passed: true, reason: `Unknown gate type "${gate.type}" - defaulting to pass` };
+}
+
+/* ============================================================
+ * STRUCTURED OBSERVATIONS + VERIFICATION SAMPLING
+ *
+ * Agents emit structured observations (findings with severity + evidence,
+ * AC checks) instead of self-issuing gate verdicts; the engine computes the
+ * verdict via a thin policy layer (evaluateGate) and posts the legacy
+ * [AUTO-*] comment to Jira as an audit PROJECTION — humans and N8N keep the
+ * trail they know, but it is no longer the control signal.
+ *
+ * Verification sampling dispatches an adversarial second review on a sample
+ * of passed gates and records the overturn rate + root causes. This is
+ * MEASUREMENT (the platform's escaped-defect instrumentation), not deterrence
+ * — agents are ephemeral; the metric is the product.
+ * ============================================================ */
+
+const OBSERVATIONS_RELPATH = path.join(".meshwork", "observations.json");
+
+/**
+ * Ingest a worktree observations file (the zero-infrastructure transport for
+ * phases that run in a worktree, and the only transport local models need).
+ * HTTP-submitted observations win — the file is only read when nothing was
+ * submitted via POST /jobs/:id/observations.
+ */
+function ingestObservationsFile(job) {
+  if (job.observations || !job.workingDir) return;
+  const filePath = path.join(job.workingDir, OBSERVATIONS_RELPATH);
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const { ok, errors, observations } = validateObservations(raw);
+    if (!ok) {
+      appendLog(job.logFile, `\n[${nowIso()}] Observations file rejected: ${errors.join("; ")}\n`);
+      return;
+    }
+    job.observations = observations;
+    job.observationsSource = "file";
+    appendLog(job.logFile, `\n[${nowIso()}] Ingested observations file (${observations.findings.length} finding(s), ${observations.acChecks.length} AC check(s))\n`);
+    jobEmitter.emit("job:observations", { jobId: job.jobId, source: "file", findings: observations.findings.length });
+  } catch (e) {
+    appendLog(job.logFile, `\n[${nowIso()}] Observations file ingest error: ${e.message}\n`);
+  }
+}
+
+/**
+ * Ingest an [OBSERVATIONS] block from the agent's output — the universal
+ * transport: works for read-only agents (the reviewer has Bash and Write
+ * disallowed) and local models with MCP stripped. Lowest priority: HTTP
+ * submission and the worktree file both win over the output block.
+ */
+function ingestObservationsFromOutput(job) {
+  if (job.observations) return;
+  const text = (job.parsedOutput?.result || "") + "\n" + (job.stdout || "");
+  const { found, raw, error } = extractObservationsBlock(text);
+  if (!found) return;
+  if (error) {
+    appendLog(job.logFile, `\n[${nowIso()}] [OBSERVATIONS] block rejected: ${error}\n`);
+    return;
+  }
+  const { ok, errors, observations } = validateObservations(raw);
+  if (!ok) {
+    appendLog(job.logFile, `\n[${nowIso()}] [OBSERVATIONS] block rejected: ${errors.join("; ")}\n`);
+    return;
+  }
+  job.observations = observations;
+  job.observationsSource = "output";
+  appendLog(job.logFile, `\n[${nowIso()}] Ingested [OBSERVATIONS] block from output (${observations.findings.length} finding(s), ${observations.acChecks.length} AC check(s))\n`);
+  jobEmitter.emit("job:observations", { jobId: job.jobId, source: "output", findings: observations.findings.length });
+}
+
+// In-memory since last restart; per-pipeline results persist via db.pipelines.
+const verificationStats = {
+  since: nowIso(),
+  scheduled: 0,
+  completed: 0,
+  inconclusive: 0,
+  overturned: 0,
+  newFindings: 0,
+  rootCauses: {},
+  byTrigger: { sampled: 0, "zero-findings": 0 },
+};
+
+/**
+ * After a review-type gate passes, decide whether to dispatch an adversarial
+ * second review. Two triggers: deterministic sampling by jobId (the unbiased
+ * overturn-rate measurement) and zero-findings-on-structured-review (a
+ * suspiciously clean result). Verification jobs are not pipeline phases —
+ * they never advance or block the pipeline; they produce a metric.
+ */
+function maybeScheduleVerification(pipeline, phase, phaseIndex, job, gateResult) {
+  const cfg = config.verification || {};
+  if (!cfg.enabled) return;
+  if (job.verificationOf) return; // never verify a verification job
+  const phaseNames = cfg.phases || ["code-review"];
+  if (!phaseNames.includes(phase.name)) return;
+  if (!gateResult.passed) return; // failed gates already loop back to the implementer
+
+  const sampled = sampledForVerification(job.jobId, cfg.sampleRate ?? 0.1);
+  const zeroFindings = cfg.triggerOnZeroFindings !== false &&
+    !!job.observations && job.observations.findings.length === 0;
+  if (!sampled && !zeroFindings) return;
+  const trigger = sampled ? "sampled" : "zero-findings";
+
+  const firstFindings = job.observations?.findings || [];
+  const firstSummary = firstFindings.length > 0
+    ? JSON.stringify(firstFindings.slice(0, 30), null, 1)
+    : (job.observations ? "(the first review reported zero findings)" : "(the first review used the legacy comment protocol — its findings are in the Jira [AUTO-*] comment thread)");
+
+  const prompt = [
+    `You are an independent verification reviewer. A code review for issue ${pipeline.issueKey} already PASSED its gate. Your single job is to find what the first reviewer MISSED — do not repeat or re-confirm their findings.`,
+    ``,
+    `Review the current branch's diff against the merge base from a deliberately different angle than a standard checklist review: trace data flows end-to-end, hunt edge cases and error paths, check the changed code against the issue's acceptance criteria, and look for security and concurrency problems.`,
+    ``,
+    `The first reviewer's findings (do NOT report these again):`,
+    firstSummary,
+    ``,
+    `For EVERY new finding, include a "cause" field classifying why the first review missed it:`,
+    `- "spec-ambiguity" — the requirement was vague; the miss traces to the spec`,
+    `- "reviewer-omission" — clearly in scope and visible; the first reviewer should have caught it`,
+    `- "implementer-error" — a defect introduced by the implementation that review alone could not see (e.g. only visible by running code)`,
+    `- "context-starvation" — the first reviewer lacked context that exists elsewhere (other files, prior phases)`,
+    `- "other"`,
+    ``,
+    `Report via an observations block at the END of your final output (this is your ONLY output channel — do NOT post Jira comments):`,
+    ``,
+    `[OBSERVATIONS]`,
+    `{ "gate": "verification", "findings": [{ "severity": "critical|major|minor|info", "title": "...", "file": "...", "line": 1, "detail": "...", "evidence": "...", "cause": "..." }], "summary": "..." }`,
+    `[/OBSERVATIONS]`,
+    ``,
+    `If you genuinely find nothing the first reviewer missed, submit an empty findings array with a summary explaining what you checked. An honest "nothing found" is a valid result.`,
+  ].join("\n");
+
+  const jobId = makeJobId();
+  const logFile = path.join(LOG_DIR, `${jobId}.log`);
+  const metaFile = path.join(LOG_DIR, `${jobId}.json`);
+  const vJob = {
+    jobId,
+    status: "queued",
+    mode: "agent",
+    agent: cfg.agent || "engineer-reviewer",
+    prompt,
+    context: "",
+    workingDir: pipeline.worktreePath || pipeline.workingDir,
+    issueKey: null, // no Jira side effects — observations are the only channel
+    model: cfg.model || "sonnet",
+    selectedModel: null,
+    requestedProvider: null,
+    callbackUrl: null,
+    logFile,
+    metaFile,
+    createdAt: nowIso(),
+    startedAt: null,
+    finishedAt: null,
+    pid: null,
+    output: null,
+    error: null,
+    retryCount: 0,
+    maxRetries: 0, // best-effort: a failed verification is recorded as inconclusive, never retried
+    source: `verification:${pipeline.pipelineId}:${phase.name}`,
+    verificationOf: {
+      pipelineId: pipeline.pipelineId,
+      issueKey: pipeline.issueKey,
+      phaseName: phase.name,
+      phaseIndex,
+      firstJobId: job.jobId,
+      firstFindings,
+      trigger,
+    },
+  };
+
+  jobs.set(jobId, vJob);
+  db.jobs.set(vJob).catch(e => console.error(`[db] Failed to persist job ${jobId}: ${e.message}`));
+  queue.push({ jobId });
+
+  verificationStats.scheduled++;
+  verificationStats.byTrigger[trigger] = (verificationStats.byTrigger[trigger] || 0) + 1;
+  phase.verification = { jobId, trigger, status: "scheduled" };
+  db.pipelines.set(pipeline).catch(e => console.error('[db] pipeline update failed: ' + e.message));
+
+  console.log(`[${nowIso()}] Verification review scheduled for ${pipeline.issueKey} phase ${phase.name} (trigger=${trigger}, job ${jobId})`);
+  jobEmitter.emit("verification:scheduled", { pipelineId: pipeline.pipelineId, phase: phase.name, jobId, trigger });
+  setImmediate(tickWorker);
+}
+
+/**
+ * Record the outcome of a verification review: compare finding sets, compute
+ * overturn, tally root causes, persist onto the pipeline phase, and flag the
+ * issue when the second look found something material. Overturns also become
+ * shared lessons so future reviewer runs learn the failure class.
+ */
+function handleVerificationJobComplete(job) {
+  const v = job.verificationOf;
+  if (!v) return;
+
+  const phaseLabel = `${v.issueKey || "?"}/${v.phaseName}`;
+  if (!job.observations) {
+    verificationStats.inconclusive++;
+    console.log(`[${nowIso()}] Verification review ${job.jobId} for ${phaseLabel} inconclusive (no observations submitted)`);
+    recordVerificationOnPipeline(v, { status: "inconclusive", jobId: job.jobId, trigger: v.trigger });
+    return;
+  }
+
+  const { newFindings, overturn, rootCauses } = compareFindings(v.firstFindings, job.observations.findings);
+  verificationStats.completed++;
+  verificationStats.newFindings += newFindings.length;
+  if (overturn) verificationStats.overturned++;
+  for (const [cause, n] of Object.entries(rootCauses)) {
+    verificationStats.rootCauses[cause] = (verificationStats.rootCauses[cause] || 0) + n;
+  }
+
+  const result = {
+    status: "completed",
+    jobId: job.jobId,
+    trigger: v.trigger,
+    overturn,
+    newFindings: newFindings.length,
+    rootCauses,
+    completedAt: nowIso(),
+  };
+  recordVerificationOnPipeline(v, result);
+
+  console.log(`[${nowIso()}] Verification review ${job.jobId} for ${phaseLabel}: ${overturn ? "OVERTURNED" : "upheld"} (${newFindings.length} new finding(s))`);
+  jobEmitter.emit("verification:completed", { ...result, pipelineId: v.pipelineId, issueKey: v.issueKey, phase: v.phaseName });
+
+  if (overturn && v.issueKey) {
+    const head = newFindings
+      .filter(f => f.severity === "critical" || f.severity === "major")
+      .slice(0, 5)
+      .map(f => `- [${f.severity}] ${f.title}${f.file ? ` — ${f.file}${f.line ? `:${f.line}` : ""}` : ""} (cause: ${f.cause || "other"})`)
+      .join("\n");
+    issueTracker.addComment(
+      v.issueKey,
+      `[VERIFICATION] An independent second review (${v.trigger}) found ${newFindings.length} finding(s) the passed ${v.phaseName} gate missed:\n${head}\nFull detail: job ${job.jobId}. The gate result stands — this is measurement, not a re-gate — but these findings deserve a human look.`,
+      "runner"
+    ).catch(e => console.error(`[${nowIso()}] Verification comment failed for ${v.issueKey}: ${e.message}`));
+
+    appendLesson("verification-overturn", v.issueKey,
+      `Second review overturned a passed ${v.phaseName} gate: ${newFindings.slice(0, 3).map(f => f.title).join("; ")}`);
+  }
+}
+
+function recordVerificationOnPipeline(v, result) {
+  const pipeline = pipelines.get(v.pipelineId);
+  if (!pipeline) return;
+  const phase = pipeline.phases[v.phaseIndex];
+  if (phase) {
+    phase.verification = { ...(phase.verification || {}), ...result };
+    db.pipelines.set(pipeline).catch(e => console.error('[db] pipeline update failed: ' + e.message));
+  }
 }
 
 /**
@@ -6493,6 +6837,19 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
   const gateResult = evaluateGate(pipeline, phase, job);
   phase.gateResult = gateResult;
 
+  // Structured gate: keep the observations on the phase (jobs are evicted
+  // from memory once terminal — the phase record is what downstream phases
+  // and the context bridge read), and post the audit projection to Jira so
+  // humans and N8N consumers keep the [AUTO-*] trail they already know.
+  if (gateResult.structured && job.observations) {
+    phase.observations = job.observations;
+    if (pipeline.issueKey && phase.gate?.prefix) {
+      const projection = renderObservationsComment(phase.gate.prefix, gateResult.policyResult, job.observations);
+      issueTracker.addComment(pipeline.issueKey, projection, "runner").catch(e =>
+        console.error(`[${nowIso()}] Audit projection comment failed for ${pipeline.issueKey}: ${e.message}`));
+    }
+  }
+
   if (!gateResult.passed) {
     const verdict = gateResult.verdict || null;
 
@@ -6715,6 +7072,13 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
   });
 
   console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} phase ${phase.name} completed and gate passed`);
+
+  // Verification sampling: best-effort, never blocks or advances the pipeline
+  try {
+    maybeScheduleVerification(pipeline, phase, phaseIndex, job, gateResult);
+  } catch (e) {
+    console.warn(`[${nowIso()}] Verification scheduling error: ${e.message}`);
+  }
 
   // Dynamic gating: planner phase selects which subsequent phases to run
   if (phase.dynamicGating) {
@@ -11639,6 +12003,12 @@ async function runClaude(job) {
     if (Array.isArray(job.labels) && job.labels.length) spawnEnv.MESHWORK_LABELS = job.labels.join(",");
     spawnEnv.MESHWORK_RUNNER_URL = process.env.RUNNER_INTERNAL_URL || `http://runner:${config.port || 3210}`;
     if (process.env.RUNNER_SECRET) spawnEnv.MESHWORK_RUNNER_SECRET = process.env.RUNNER_SECRET;
+    // Job-scoped credentials for the structured observations channel
+    // (POST /jobs/:id/observations). Scoped to this job only — unlike the
+    // global secret, a leaked token can't touch any other job.
+    job.jobToken = job.jobToken || crypto.randomBytes(16).toString("hex");
+    spawnEnv.MESHWORK_JOB_ID = job.jobId;
+    spawnEnv.MESHWORK_JOB_TOKEN = job.jobToken;
 
     // Agent Teams: enable for team lead agents (skip for hybrid — runner manages teammates)
     if (config.teams?.enabled && config.teams.teamLeads?.[job.agent] && !job._hybridTeam) {
@@ -12486,6 +12856,17 @@ async function tickWorker() {
         setImmediate(tickWorker);
         return;
       }
+    }
+
+    // Structured observations: ingest the worktree file transport (HTTP
+    // submissions land on the job directly), then settle any verification
+    // review this job was dispatched as.
+    try {
+      ingestObservationsFile(job);
+      ingestObservationsFromOutput(job);
+      if (job.verificationOf) handleVerificationJobComplete(job);
+    } catch (e) {
+      console.error(`[${nowIso()}] Observations processing error for ${job.jobId}: ${e.message}`);
     }
 
     // Update conversation memory for chat jobs
@@ -14378,6 +14759,53 @@ app.post("/jobs/:jobId/retry", requireSecret, async (req, res) => {
 /**
  * REAL-TIME SSE ENDPOINT (Phase 1.4)
  */
+/**
+ * Structured observations intake — the HTTP transport of the observations
+ * channel (the worktree file is the other). Auth: the job-scoped token issued
+ * into the agent's environment (preferred; a leaked token can't touch other
+ * jobs) or the global runner secret. Once a job is terminal and evicted from
+ * memory, submission is rejected — observations inform the gate, they don't
+ * trail it.
+ */
+app.post("/jobs/:jobId/observations", (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: "Unknown or already-finalised job" });
+
+  const token = req.header("x-meshwork-job-token") || "";
+  const tokenOk = !!job.jobToken && token.length > 0 && (() => {
+    const a = crypto.createHash("sha256").update(token).digest();
+    const b = crypto.createHash("sha256").update(job.jobToken).digest();
+    return crypto.timingSafeEqual(a, b);
+  })();
+  if (!tokenOk && !secretMatches(req.header("x-runner-secret"))) {
+    return res.status(401).json({ error: "Invalid job token" });
+  }
+
+  const { ok, errors, observations } = validateObservations(req.body);
+  if (!ok) {
+    return res.status(400).json({ error: "Invalid observations payload", details: errors });
+  }
+
+  job.observations = observations;
+  job.observationsSource = "http";
+  db.jobs.set(job).catch(e => console.error(`[db] Failed to persist job ${job.jobId}: ${e.message}`));
+  appendLog(job.logFile, `\n[${nowIso()}] Observations submitted via HTTP (${observations.findings.length} finding(s), ${observations.acChecks.length} AC check(s))\n`);
+  jobEmitter.emit("job:observations", { jobId: job.jobId, source: "http", findings: observations.findings.length });
+  res.json({ ok: true, findings: observations.findings.length, acChecks: observations.acChecks.length });
+});
+
+/**
+ * Verification sampling metrics — the overturn-rate instrumentation.
+ * In-memory since last restart; per-pipeline results live on the persisted
+ * pipeline records (phases[].verification).
+ */
+app.get("/api/verification-stats", requireSecret, (_req, res) => {
+  const overturnRate = verificationStats.completed > 0
+    ? Number((verificationStats.overturned / verificationStats.completed).toFixed(4))
+    : null;
+  res.json({ ...verificationStats, overturnRate });
+});
+
 app.get("/events", requireSecret, (req, res) => {
   if (!SSE_ENABLED) {
     return res.status(403).json({ ok: false, error: "SSE disabled" });

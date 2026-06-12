@@ -8,6 +8,28 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- **Structured observations protocol** (`lib/observations.js`): gates marked
+  `structured: true` (default: `code-review`) compute their verdict in the
+  ENGINE from agent-submitted findings + AC checks via a thin policy layer
+  (zero criticals, no AC gaps; per-product `observationPolicy` override) —
+  agents no longer self-issue verdicts on these gates. Three transports:
+  `POST /jobs/:id/observations` with a job-scoped token, a
+  `.meshwork/observations.json` worktree file, and an
+  `[OBSERVATIONS]` output block (works for the read-only reviewer and
+  MCP-stripped local models). Dual-runs with legacy prefix parsing; the
+  engine posts the `[AUTO-*] VERDICT:` Jira comment itself as an audit
+  projection so humans and N8N keep the existing trail. Observations also
+  flow to later phases as a structured block beside the prose context bridge.
+- **Verification sampling** (overturn-rate instrumentation): adversarial
+  second reviews dispatched on a deterministic sample of passed code-review
+  gates (plus zero-findings triggers), with root-cause tagging of every
+  missed finding (spec-ambiguity / reviewer-omission / implementer-error /
+  context-starvation). Measurement, not gating — never blocks pipelines.
+  Metrics at `GET /api/verification-stats`; overturns flag the issue with a
+  `[VERIFICATION]` comment and append a shared lesson.
+- `runner_submit_observations` and `runner_verification_stats` tools in the
+  runner-admin MCP server; `MESHWORK_JOB_ID`/`MESHWORK_JOB_TOKEN` issued into
+  every job's environment.
 - Eight new agent templates so every `/onboard-product` selection group is backed
   by a real template: `product-manager-domain-specialist` (structural reference
   for the wizard's domain-specialist PM generation), `marketing`,

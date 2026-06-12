@@ -15,6 +15,7 @@ All endpoints except `/health` require `x-runner-secret` header.
 - `GET /jobs/:jobId/output` - Parsed Claude output
 - `GET /jobs/:jobId/log` - Stream job log
 - `DELETE /jobs/:jobId` - Cancel a job
+- `POST /jobs/:jobId/observations` - Submit structured observations (findings, AC checks) for a running job; auth via the job-scoped `x-meshwork-job-token` (issued into the job env) or the runner secret. See [pipelines.md](pipelines.md) "Structured Observations".
 
 ### Real-Time & Metrics
 - `GET /events` - SSE stream for job lifecycle events (includes `job:progress` for real-time tool calls and cost)
@@ -23,6 +24,7 @@ All endpoints except `/health` require `x-runner-secret` header.
 - `GET /api/metrics` - Detailed metrics by agent
 - `GET /api/pm-digest` - Curated telemetry digest for PM agent (24h/week stats, quality gate rates, stalled jobs, agent performance, budget status)
 - `GET /api/kpi` - 3-tier metrics (business/operational/cost), consumed by Daily Digest + Weekly Retro workflows
+- `GET /api/verification-stats` - Verification sampling metrics: overturn rate of passed review gates, new-finding counts, root-cause tallies
 
 ### Reliability & Operations
 - `GET /api/failed-callbacks` - List failed callback deliveries

@@ -52,6 +52,56 @@ explicit verdict (`VERDICT: PASS`, `**Verdict:** APPROVED`, `[AUTO-VERIFY] PASS`
   successfully. The legacy trust-on-success behaviour is available via
   `gates.legacyTrustSucceededJob: true` but defeats the purpose of gates.
 
+### Structured Observations (engine-computed verdicts)
+
+Gates marked `"structured": true` in their pipeline definition (default: the
+`code-review` phase in all shipped pipelines) invert the trust model: the
+agent does not issue a verdict. It emits **observations** — findings with
+severity and file:line evidence, plus AC checks — and the engine computes the
+verdict via a thin policy layer (`gates.structuredObservations.policy`,
+default: zero `critical` findings, no AC `gap`s; per-product override via
+`observationPolicy` in `product.json`). The engine then posts the legacy
+`[AUTO-*] VERDICT:` Jira comment itself as an **audit projection**, so humans
+and existing N8N consumers keep the trail they know — the prefix is demoted
+from control signal to projection.
+
+Three transports, ingested in priority order:
+
+1. `POST /jobs/:id/observations` with the job-scoped `x-meshwork-job-token`
+   (issued into every job's environment as `MESHWORK_JOB_ID` /
+   `MESHWORK_JOB_TOKEN`; also wrapped as the `runner_submit_observations`
+   MCP tool in runner-admin)
+2. `.meshwork/observations.json` in the job's working directory (worktree
+   phases, local models)
+3. An `[OBSERVATIONS]…[/OBSERVATIONS]` JSON block at the end of the agent's
+   output — the universal fallback; this is what the read-only reviewer uses
+   (it has Bash and Write disallowed)
+
+**Dual-run**: when no observations arrive, the legacy prefix parsing applies
+unchanged. Set `gates.structuredObservations.require: true` to fail closed
+instead. Validated observations are stored on the phase record and flow
+forward to later phases as a structured block alongside the prose context
+bridge.
+
+### Verification Sampling (overturn-rate instrumentation)
+
+After a `code-review` gate passes, the runner may dispatch an **adversarial
+second review** — an isolated job prompted to find what the first reviewer
+missed, with each new finding root-cause tagged (`spec-ambiguity`,
+`reviewer-omission`, `implementer-error`, `context-starvation`). Triggers
+(`verification` config): deterministic sampling by job id (`sampleRate`,
+default 0.1) and zero-findings-on-a-structured-review (`triggerOnZeroFindings`).
+
+This is **measurement, not gating**: verification jobs never block or advance
+the pipeline. Results are recorded on the pipeline phase
+(`phases[].verification`), aggregated at `GET /api/verification-stats`
+(overturn rate, new-finding counts, root-cause tallies), and an overturn —
+a new critical/major finding — posts a `[VERIFICATION]` comment on the issue
+and appends a shared lesson. The overturn rate is the platform's
+escaped-defect instrumentation: it tells you whether review quality, spec
+quality, or context starvation is the binding constraint before you spend on
+fixing the wrong one.
+
 ### Independent Post-Team Review
 
 When Agent Teams is enabled, teammate reviewers share the lead's conversation

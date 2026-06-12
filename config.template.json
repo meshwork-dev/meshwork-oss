@@ -127,6 +127,23 @@
     "gateTypes": ["quality-gate"],
     "maxVerifyAttempts": 3
   },
+  "gates": {
+    "structuredObservations": {
+      "_comment": "Gates marked structured:true in pipelines compute their verdict from agent-submitted observations (POST /jobs/:id/observations or .meshwork/observations.json) via this policy. Dual-run: no observations -> legacy prefix parsing, unless require=true (fail closed). Per-product override: observationPolicy in product.json.",
+      "enabled": true,
+      "require": false,
+      "policy": { "failOnSeverity": "critical", "failOnAcGap": true }
+    }
+  },
+  "verification": {
+    "_comment": "Sampled adversarial second reviews of passed review gates. Measurement, not gating: records overturn rate + root causes (GET /api/verification-stats), flags overturns on the issue, never blocks the pipeline.",
+    "enabled": true,
+    "sampleRate": 0.1,
+    "phases": ["code-review"],
+    "triggerOnZeroFindings": true,
+    "agent": "engineer-reviewer",
+    "model": "sonnet"
+  },
   "chrome": {
     "enabled": true,
     "acceptanceAgents": ["product-manager", "uat-agent", "user-guide-agent"]
@@ -410,7 +427,7 @@
           "name": "code-review",
           "agent": "engineer-reviewer",
           "model": "sonnet",
-          "gate": { "type": "comment-prefix", "prefix": "[AUTO-REVIEW]" }
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-REVIEW]", "structured": true }
         },
         {
           "name": "verify",
@@ -435,7 +452,7 @@
           "name": "code-review",
           "agent": "engineer-reviewer",
           "model": "sonnet",
-          "gate": { "type": "comment-prefix", "prefix": "[AUTO-REVIEW]" }
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-REVIEW]", "structured": true }
         },
         {
           "name": "verify",
@@ -492,7 +509,7 @@
           "name": "code-review",
           "agent": "engineer-reviewer",
           "model": "opus",
-          "gate": { "type": "comment-prefix", "prefix": "[AUTO-REVIEW]" }
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-REVIEW]", "structured": true }
         },
         {
           "name": "security-review",

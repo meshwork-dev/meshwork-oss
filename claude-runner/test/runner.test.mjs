@@ -523,3 +523,74 @@ itest("restart recovery: interrupted running jobs are failed/retried with 'inter
   }, { timeoutMs: 25000, label: "ancient job to be marked stale-failed" });
   assert.match(tooOld.error, /Stale job from previous runner session/);
 });
+
+// ---------------------------------------------------------------------------
+// 12. Structured observations endpoint + verification stats
+// ---------------------------------------------------------------------------
+
+itest("observations endpoint: auth, validation, storage", async () => {
+  const created = await api(runner.base, "POST", "/agent", {
+    headers: authHeaders(),
+    body: { agent: "engineer-reviewer", prompt: "review the latest change", workingDir: ws.insideAllowed },
+  });
+  assert.equal(created.status, 202);
+  const jobId = created.json.jobId;
+  assert.ok(jobId, "POST /agent must return a jobId");
+
+  // Unknown job → 404
+  const missing = await api(runner.base, "POST", "/jobs/job_does_not_exist/observations", {
+    headers: authHeaders(), body: { findings: [] },
+  });
+  assert.equal(missing.status, 404);
+
+  // No auth → 401
+  const unauth = await api(runner.base, "POST", `/jobs/${jobId}/observations`, { body: { findings: [] } });
+  assert.equal(unauth.status, 401);
+
+  // Wrong job token → 401
+  const badTok = await api(runner.base, "POST", `/jobs/${jobId}/observations`, {
+    headers: { "x-meshwork-job-token": "definitely-wrong" }, body: { findings: [] },
+  });
+  assert.equal(badTok.status, 401);
+
+  // Invalid payload (valid secret auth) → 400 with actionable details
+  const invalid = await api(runner.base, "POST", `/jobs/${jobId}/observations`, {
+    headers: authHeaders(),
+    body: { findings: [{ severity: "blocker", title: "x" }] },
+  });
+  assert.equal(invalid.status, 400);
+  assert.ok(Array.isArray(invalid.json.details), "validation errors must be returned");
+  assert.match(invalid.json.details[0], /severity must be one of/);
+
+  // Valid payload → 200, stored on the job, source recorded
+  const valid = await api(runner.base, "POST", `/jobs/${jobId}/observations`, {
+    headers: authHeaders(),
+    body: {
+      gate: "code-review",
+      findings: [{ severity: "major", title: "missing error handling on upload path", file: "src/upload.ts", line: 31 }],
+      acChecks: [{ id: "AC1", status: "met", evidence: "upload.spec.ts" }],
+      summary: "One major issue found.",
+    },
+  });
+  assert.equal(valid.status, 200);
+  assert.equal(valid.json.ok, true);
+  assert.equal(valid.json.findings, 1);
+
+  const fetched = await api(runner.base, "GET", `/jobs/${jobId}`, { headers: authHeaders() });
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.json.job?.observations?.findings?.length, 1);
+  assert.equal(fetched.json.job?.observations?.findings?.[0]?.severity, "major");
+  assert.equal(fetched.json.job?.observationsSource, "http");
+});
+
+itest("GET /api/verification-stats exposes the overturn-rate instrumentation", async () => {
+  const unauth = await api(runner.base, "GET", "/api/verification-stats");
+  assert.equal(unauth.status, 401);
+
+  const r = await api(runner.base, "GET", "/api/verification-stats", { headers: authHeaders() });
+  assert.equal(r.status, 200);
+  assert.ok("overturnRate" in r.json, "must expose overturnRate (null until verifications complete)");
+  assert.equal(typeof r.json.scheduled, "number");
+  assert.equal(typeof r.json.completed, "number");
+  assert.ok(r.json.byTrigger && typeof r.json.byTrigger === "object");
+});

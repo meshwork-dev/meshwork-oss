@@ -181,5 +181,51 @@ server.registerTool("runner_pm_digest",
   { description: "Get the latest PM digest: sprint health, blockers, and action items" },
   async () => ok(await get("/api/pm-digest")));
 
+// ── Structured observations ──────────────────────────────────────────
+
+server.registerTool("runner_submit_observations",
+  {
+    description: "Submit structured review observations (findings with severity + evidence, AC checks) for the CURRENT job. The pipeline engine computes the gate verdict from these — do not issue a verdict yourself. Job identity and token are read from the job environment (MESHWORK_JOB_ID / MESHWORK_JOB_TOKEN); only pass them explicitly when submitting for a different job.",
+    inputSchema: {
+      findings: z.array(z.object({
+        severity: z.enum(["critical", "major", "minor", "info"]),
+        title: z.string(),
+        file: z.string().optional(),
+        line: z.number().int().positive().optional(),
+        detail: z.string().optional(),
+        evidence: z.string().optional(),
+        cause: z.enum(["spec-ambiguity", "reviewer-omission", "implementer-error", "context-starvation", "other"]).optional(),
+      })).default([]),
+      acChecks: z.array(z.object({
+        id: z.string(),
+        status: z.enum(["met", "gap", "partial"]),
+        evidence: z.string().optional(),
+      })).default([]),
+      summary: z.string().optional(),
+      gate: z.string().optional(),
+      jobId: z.string().optional().describe("Defaults to MESHWORK_JOB_ID from the environment"),
+      jobToken: z.string().optional().describe("Defaults to MESHWORK_JOB_TOKEN from the environment"),
+    },
+  },
+  async ({ findings, acChecks, summary, gate, jobId, jobToken }) => {
+    const id = jobId || process.env.MESHWORK_JOB_ID;
+    const token = jobToken || process.env.MESHWORK_JOB_TOKEN;
+    if (!id) return ok({ error: "No jobId provided and MESHWORK_JOB_ID is not set" });
+    const res = await fetch(`${RUNNER_URL}/jobs/${id}/observations`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { "x-meshwork-job-token": token } : { "x-runner-secret": RUNNER_SECRET }),
+      },
+      body: JSON.stringify({ findings, acChecks, summary, gate }),
+    });
+    const text = await res.text();
+    try { return ok(JSON.parse(text)); } catch { return ok({ status: res.status, body: text }); }
+  });
+
+server.registerTool("runner_verification_stats",
+  { description: "Verification sampling metrics: overturn rate of passed review gates, new-finding counts, and root-cause tallies (spec-ambiguity / reviewer-omission / implementer-error / context-starvation)" },
+  async () => ok(await get("/api/verification-stats")));
+
 const transport = new StdioServerTransport();
 await server.connect(transport);

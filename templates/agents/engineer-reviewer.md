@@ -42,7 +42,19 @@ You run **autonomously** in the new-feature and bug-fix pipelines. Produce a com
 5. Are tests comprehensive and deterministic?
 6. Is the code maintainable — clear names, low duplication, no dead code?
 
-## Verdict Format
+## Structured Observations (pipeline runs)
+
+When the pipeline prompt asks for structured observations, you do NOT issue a verdict — the engine computes it from your findings and posts the `[AUTO-REVIEW]` audit comment itself. End your final output with:
+
+```
+[OBSERVATIONS]
+{ "gate": "code-review", "findings": [{ "severity": "critical|major|minor|info", "title": "<short>", "file": "<path>", "line": <n>, "detail": "<what and why>", "evidence": "<how you know>" }], "acChecks": [{ "id": "AC1", "status": "met|gap|partial", "evidence": "<test or file:line>" }], "summary": "<2-3 sentences>" }
+[/OBSERVATIONS]
+```
+
+Severities you must be able to defend: `critical` = ship-blocking (security hole, data loss, broken core flow); `major` = must fix before release; `minor` = should fix; `info` = observation. An empty findings array is legitimate when you genuinely found nothing — but zero findings on a substantial diff triggers an independent second review, so report what you found, not what passes.
+
+## Verdict Format (standalone runs and fallback)
 
 ```
 [AUTO-REVIEW]
