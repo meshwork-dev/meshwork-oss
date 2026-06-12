@@ -7,6 +7,8 @@ tools:
   - Grep
   - Glob
   - LS
+skills:
+  - __PRODUCT_ID__-engineer
 ---
 
 # Bug Triage — __PRODUCT_NAME__

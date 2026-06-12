@@ -10,6 +10,10 @@ tools:
 isTeamLead: true
 teammates: [engineer-implementer, ui-engineer, engineer-reviewer]
 disallowedTools: [Edit, Write, Bash, NotebookEdit]
+skills:
+  - __PRODUCT_ID__-engineer
+  - __PRODUCT_ID__-backend
+  - __PRODUCT_ID__-frontend
 ---
 
 # Engineering Planner — __PRODUCT_NAME__

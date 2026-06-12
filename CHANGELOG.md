@@ -8,6 +8,23 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- Eight new agent templates so every `/onboard-product` selection group is backed
+  by a real template: `product-manager-domain-specialist` (structural reference
+  for the wizard's domain-specialist PM generation), `marketing`,
+  `creative-assets`, `sales-development`, `sales-researcher`, `sales-outreach`,
+  `user-guide-agent`, `video-renderer`
+- `new-feature-enterprise` pipeline (plan → implement → code-review →
+  security-review → verify → PM acceptance) for regulated/high-stakes products
+- Quality gate now derives per-product checks from `product.json`
+  `qualityGate.checks`, falling back to `techStack.commands` collected at
+  onboarding — products no longer silently run the global `npm` defaults
+- Quality gate parses test-runner summaries (Jest/Vitest/Playwright/pytest/
+  Mocha/TAP) so a green exit code can't hide failing tests
+  (`parseTestSummary` in `lib/protocol.js`, with unit tests)
+- `/onboard-product` post-generation validation step: runs
+  `scripts/lint-agents.mjs` and verifies `skills:` references resolve
+- `skills:`/`context:` frontmatter declarations on core agent templates so the
+  runner's per-agent context optimisation engages for generated plugins
 - Initial OSS hygiene: `SECURITY.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, `ROADMAP.md`
 - GitHub issue templates (bug, feature, agent proposal) and pull-request template
 - CI workflow that lints agent YAML frontmatter on every PR
@@ -32,6 +49,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Fixed
 - Removed exposed Telegram bot token from `workflows/` and git history
 - Scrubbed `lebc-client/` brand leak from `shared-skills/agents/skill-auditor.md`
+- `/onboard-product` pointed at a non-existent `estateos-plugin` PM reference
+  and a hardcoded `CER` Jira key; the product-onboarding skill's worked example
+  mixed `myproduct` inputs with `estateos` outputs
 
 ### Security
 - Rotated and force-pushed history to purge the leaked token

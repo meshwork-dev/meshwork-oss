@@ -25,8 +25,10 @@ const STRICT_MCP = process.argv.includes('--strict-mcp') || process.env.LINT_MCP
 
 // MCP servers provisioned dynamically at runtime (n8n mcpTrigger workflows,
 // per-product setup) — not discoverable from any committed .mcp.json.
-// Keep this list short; prefer adding servers to a committed .mcp.json.
-const DYNAMIC_MCP_SERVERS = ['n8n-zai-mcp', 'memory', 'jira'];
+// 'attio' is written into a product plugin's .mcp.json by /onboard-product
+// when the user selects Attio as CRM; the sales templates reference it before
+// any plugin exists. Keep this list short; prefer committed .mcp.json entries.
+const DYNAMIC_MCP_SERVERS = ['n8n-zai-mcp', 'memory', 'jira', 'attio'];
 
 const SCAN_DIRS = [
   'templates/agents',

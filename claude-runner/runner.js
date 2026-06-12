@@ -17,6 +17,7 @@ const {
   GATE_POSITIVE_VERDICTS,
   extractGateVerdict,
   parseCreateSubtaskBlocks,
+  parseTestSummary,
   wrapUntrusted,
   signCallbackPayload,
 } = require("./lib/protocol");
@@ -11959,7 +11960,10 @@ async function runQualityGate(job) {
     return { passed: true, skipped: true, reason: `phase gate type is '${job.pipelineGateType}', not 'quality-gate'`, results: [] };
   }
 
-  // Product-level quality gate override: check product.json for custom checks
+  // Product-level quality gate override: check product.json for custom checks,
+  // falling back to the dev commands collected at onboarding (techStack.commands)
+  // so a product never silently runs the global npm defaults against a repo
+  // whose scripts have different names.
   let productChecks = null;
   for (const [, product] of products) {
     const mappedDir = config.pathMappings?.[product.workingDir] || product.workingDir;
@@ -11967,6 +11971,17 @@ async function runQualityGate(job) {
       productChecks = product.qualityGate?.checks || null;
       if (productChecks) {
         appendLog(job.logFile, `\n[${nowIso()}] Using product-level quality gate checks for ${product.name}\n`);
+      } else if (product.techStack?.commands) {
+        const cmds = product.techStack.commands;
+        const fallback = [
+          cmds.typeCheck ? { name: "type-check", cmd: cmds.typeCheck, required: true } : null,
+          cmds.lint ? { name: "lint", cmd: cmds.lint, required: true } : null,
+          cmds.test ? { name: "test", cmd: cmds.test, required: true } : null,
+        ].filter(Boolean);
+        if (fallback.length > 0) {
+          productChecks = fallback;
+          appendLog(job.logFile, `\n[${nowIso()}] Using quality gate checks derived from techStack.commands for ${product.name} (${fallback.map(c => c.name).join(", ")})\n`);
+        }
       }
       break;
     }
@@ -12018,6 +12033,19 @@ async function runQualityGate(job) {
     appendLog(job.logFile, `[${nowIso()}] Running check: ${resolvedCheck.name} (${resolvedCheck.cmd}${isTurboRepo && check.name === "typecheck" ? " [turbo detected]" : ""}${pkgNote})\n`);
 
     const result = await runQualityCheck(resolvedCheck, job.workingDir);
+
+    if (resolvedCheck.name === "test") {
+      const stats = parseTestSummary(result.output);
+      if (stats) {
+        result.testStats = stats;
+        appendLog(job.logFile, `[${nowIso()}] Test summary (${stats.runner}): ${stats.passed} passed, ${stats.failed} failed\n`);
+        if (result.passed && stats.failed > 0) {
+          result.passed = false;
+          result.failedByTestStats = true;
+          appendLog(job.logFile, `[${nowIso()}] Test command exited 0 but the runner reported ${stats.failed} failing test(s) — marking check FAILED\n`);
+        }
+      }
+    }
     results.push(result);
 
     appendLog(job.logFile, `[${nowIso()}] Check ${check.name}: ${result.passed ? "PASSED" : "FAILED"} (${result.durationMs}ms)\n`);

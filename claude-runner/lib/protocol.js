@@ -168,11 +168,43 @@ function verifySignedPayload(bodyStr, secret, timestampHeader, signatureHeader, 
   return crypto.timingSafeEqual(a, b);
 }
 
+/**
+ * Parse a test runner's summary from quality-gate check output so a green
+ * exit code can't hide failing tests (wrapper scripts that swallow exit
+ * codes, `|| true`, multi-command npm scripts). Recognises TAP / node --test
+ * ("# pass N" / "# fail N"), Mocha ("N passing" / "N failing"), and the
+ * generic "N passed / N failed" style used by Jest, Vitest, Playwright and
+ * pytest. Only the last 40 lines are scanned — summaries print at the end,
+ * and earlier output may quote unrelated counts.
+ * Returns { passed, failed, runner } or null when no summary is found.
+ */
+function parseTestSummary(output) {
+  if (!output) return null;
+  const lines = String(output).split("\n").slice(-40);
+  let tapPass = null, tapFail = null;
+  let mochaPass = null, mochaFail = null;
+  let passed = null, failed = null;
+  for (const line of lines) {
+    let m;
+    if ((m = line.match(/^# pass (\d+)\b/))) tapPass = Number(m[1]);
+    if ((m = line.match(/^# fail (\d+)\b/))) tapFail = Number(m[1]);
+    if ((m = line.match(/\b(\d+) passing\b/))) mochaPass = Number(m[1]);
+    if ((m = line.match(/\b(\d+) failing\b/))) mochaFail = Number(m[1]);
+    if ((m = line.match(/\b(\d+) passed\b/))) passed = Number(m[1]);
+    if ((m = line.match(/\b(\d+) failed\b/))) failed = Number(m[1]);
+  }
+  if (tapPass !== null || tapFail !== null) return { passed: tapPass ?? 0, failed: tapFail ?? 0, runner: "tap" };
+  if (mochaPass !== null || mochaFail !== null) return { passed: mochaPass ?? 0, failed: mochaFail ?? 0, runner: "mocha" };
+  if (passed !== null || failed !== null) return { passed: passed ?? 0, failed: failed ?? 0, runner: "generic" };
+  return null;
+}
+
 module.exports = {
   GATE_NEGATIVE_VERDICTS,
   GATE_POSITIVE_VERDICTS,
   extractGateVerdict,
   parseCreateSubtaskBlocks,
+  parseTestSummary,
   wrapUntrusted,
   signCallbackPayload,
   verifySignedPayload,

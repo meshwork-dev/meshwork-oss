@@ -17,6 +17,7 @@ const REPO_DIR = path.resolve(RUNNER_DIR, "..");
 const {
   extractGateVerdict,
   parseCreateSubtaskBlocks,
+  parseTestSummary,
   wrapUntrusted,
   signCallbackPayload,
   verifySignedPayload,
@@ -278,4 +279,48 @@ test("guard_bash: blocks egress to non-allowlisted hosts, allows registries", (t
   // Existing destructive-command rules still apply
   assert.equal(runGuard("git push --force origin main").decision, "block");
   assert.equal(runGuard("sudo rm -rf /tmp/x").decision, "block");
+});
+
+// ---------------------------------------------------------------------------
+// parseTestSummary
+// ---------------------------------------------------------------------------
+
+test("parseTestSummary: jest summary line", () => {
+  const out = "PASS src/a.test.ts\nTests:       1 failed, 12 passed, 13 total\nSnapshots:   0 total\nTime:        2.1 s";
+  assert.deepEqual(parseTestSummary(out), { passed: 12, failed: 1, runner: "generic" });
+});
+
+test("parseTestSummary: vitest summary (pipe-separated)", () => {
+  const out = " Test Files  1 failed (2)\n      Tests  2 failed | 10 passed (12)\n   Duration  1.91s";
+  assert.deepEqual(parseTestSummary(out), { passed: 10, failed: 2, runner: "generic" });
+});
+
+test("parseTestSummary: playwright failure list followed by passed line", () => {
+  const out = "  1 failed\n    [chromium] › login.spec.ts:4:3 › logs in\n  10 passed (12.3s)";
+  const stats = parseTestSummary(out);
+  assert.equal(stats.failed, 1);
+  assert.equal(stats.passed, 10);
+});
+
+test("parseTestSummary: node --test TAP counters", () => {
+  const out = "# tests 52\n# suites 0\n# pass 52\n# fail 0\n# duration_ms 18510";
+  assert.deepEqual(parseTestSummary(out), { passed: 52, failed: 0, runner: "tap" });
+});
+
+test("parseTestSummary: mocha passing/failing", () => {
+  const out = "  12 passing (340ms)\n  1 failing\n\n  1) thing does stuff:";
+  assert.deepEqual(parseTestSummary(out), { passed: 12, failed: 1, runner: "mocha" });
+});
+
+test("parseTestSummary: pytest summary", () => {
+  const out = "=========== 1 failed, 12 passed, 2 warnings in 1.23s ===========";
+  const stats = parseTestSummary(out);
+  assert.equal(stats.failed, 1);
+  assert.equal(stats.passed, 12);
+});
+
+test("parseTestSummary: returns null when no summary present", () => {
+  assert.equal(parseTestSummary("tsc -b completed with no output"), null);
+  assert.equal(parseTestSummary(""), null);
+  assert.equal(parseTestSummary(null), null);
 });

@@ -208,10 +208,12 @@ Onboarding: run `/onboard-product` inside Claude Code, or re-run
 
 ### Pipeline Engine
 
-Sequences SDLC phases as isolated, retryable jobs. Three default pipeline
+Sequences SDLC phases as isolated, retryable jobs. Default pipeline
 types: `new-feature` (implementation → code-review → verify), `bug-fix`,
-`security-fix`. Pipelines are defined in `config.template.json` under
-`pipelines.*` and customisable per deployment.
+`security-fix`, and `new-feature-enterprise` (plan → implementation →
+code-review → security-review → verify → acceptance, for regulated or
+high-stakes products). Pipelines are defined in `config.template.json`
+under `pipelines.*` and customisable per deployment.
 
 ### Subtask-Based Workflow
 

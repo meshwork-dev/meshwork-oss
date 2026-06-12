@@ -8,6 +8,11 @@ tools:
   - Glob
   - LS
 disallowedTools: [Edit, Write, NotebookEdit, Bash]
+skills:
+  - __PRODUCT_ID__-engineer
+  - __PRODUCT_ID__-backend
+  - __PRODUCT_ID__-frontend
+  - security
 ---
 
 # Engineering Reviewer — __PRODUCT_NAME__

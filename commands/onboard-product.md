@@ -66,7 +66,9 @@ Ask:
    - Lint?
    - Type check? (press Enter to skip if not applicable)
 
-Tell the user: "These commands are used by the quality gate and acceptance agents."
+Tell the user: "These commands become the product's quality-gate checks — the runner executes them after every implementation job — and are referenced by the acceptance agents."
+
+These answers feed **two** places in the generated `product.json`: `techStack.commands` (agent reference) and `qualityGate.checks` (runner enforcement). Use the exact commands the user gives — never normalise script names (`type-check` stays `type-check`, not `typecheck`).
 
 ---
 
@@ -237,6 +239,15 @@ Construct a JSON object using the schema below. Use `null` or omit fields where 
     }
   },
 
+  "qualityGate": {
+    "_comment": "Executed by the runner after every implementation job. Build from the Step 3 commands verbatim — omit entries the user skipped. Without this block the runner falls back to techStack.commands, then to the global npm defaults.",
+    "checks": [
+      { "name": "type-check", "cmd": "<typeCheck command from Step 3>", "required": true },
+      { "name": "lint", "cmd": "<lint command from Step 3>", "required": true },
+      { "name": "test", "cmd": "<test command from Step 3>", "required": true }
+    ]
+  },
+
   "worktreeSetup": {
     "_comment": "Commands run once after a fresh git worktree is created. Must produce a buildable tree (install deps + generate code clients). If omitted, runner auto-detects package.json + prisma.",
     "commands": [
@@ -322,7 +333,7 @@ For each selected agent, read the template from `templates/agents/<agent>.md` as
 - Confluence space keys
 - Brand colors, tone, terminology
 - Tech stack, frameworks, dev commands
-- Skill file references (`meshwork-*` → `<id>-*`)
+- Skill file references — `meshwork-*` → `<id>-*` in the body, and `__PRODUCT_ID__-*` entries in the `skills:` frontmatter → `<id>-*`. Remove `skills:` entries for skills that were not generated (e.g. backend/frontend skills in a large monorepo)
 - CRM workspace and fields
 - UAT paths and regression journeys
 
@@ -330,7 +341,7 @@ Write each generated agent to `<id>-plugin/agents/<agent>.md`.
 
 #### CRITICAL: Domain-Specialist Product Manager
 
-The `product-manager` agent gets **special treatment**. Do NOT just substitute product names into the Meshwork PM template. Instead, use `estateos-plugin/agents/product-manager.md` as the **structural reference** (it's the domain-specialist reference implementation) and generate a PM with:
+The `product-manager` agent gets **special treatment**. Do NOT just substitute product names into the generic `templates/agents/product-manager.md`. Instead, use `templates/agents/product-manager-domain-specialist.md` as the **structural reference** (it's the domain-specialist reference implementation — the `<!-- ONBOARDING: ... -->` comments mark where Step 6 answers go) and generate a PM with:
 
 1. **Domain expertise header** — "You are a domain-specialist product manager for {Product}. You think, reason, and make decisions as someone with deep expertise in {domain from Step 6a}."
 
@@ -436,7 +447,21 @@ Inform the user: "Added `<workingDir>` to `allowedRoots` in config.json."
 
 If `allowedRoots` is empty (no restriction), skip this step and say so.
 
-### 6. Print next steps
+### 6. Validate the generated plugin
+
+Run the agent linter from the Meshwork-AutoDev root (it auto-discovers `<id>-plugin/agents/`):
+
+```bash
+node scripts/lint-agents.mjs
+```
+
+Fix any reported errors in the generated agents before continuing (frontmatter shape, model values, tool references).
+
+Then verify skill references resolve: for every entry under `skills:` in each generated agent's frontmatter, confirm a matching directory exists in `<id>-plugin/skills/` or `shared-skills/skills/`. Remove entries that do not resolve — a dangling reference silently degrades the runner's per-agent context optimisation.
+
+Report the validation result to the user (files checked, errors fixed, dangling references removed).
+
+### 7. Print next steps
 
 Tell the user:
 
@@ -463,7 +488,9 @@ Plugin scaffold created at `<id>-plugin/`.
 
 7. **Sprint execution** — if sprint execution is enabled, issues in "To Do" status within an active sprint on board {boardId} will be auto-dispatched every 10 minutes. Add "Blocks" issue links for dependency ordering.
 
-8. **Optional: N8N routing** — if you have a Jira project with a different key (not `CER`), add a routing rule to the `Jira_Webhook_Listener` N8N workflow so issues from your project get dispatched to the runner.
+7b. **Pipeline choice** — the default `new-feature` pipeline is lean (implement → review → verify). If you declared regulators in Step 6, consider dispatching work through `new-feature-enterprise` instead (plan → implement → review → security-review → verify → PM acceptance) by passing `"pipelineType": "new-feature-enterprise"` to `POST /pipeline`.
+
+8. **Optional: N8N routing** — if your Jira project key does not yet have a routing rule in the `Jira_Webhook_Listener` N8N workflow, add one so issues from your project get dispatched to the runner.
 
 9. **Reload without restart** — once the runner is running, you can hot-reload this config:
    ```bash

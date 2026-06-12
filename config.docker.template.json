@@ -264,6 +264,50 @@
           "gate": { "type": "comment-prefix", "prefix": "[AUTO-VERIFY]" }
         }
       ]
+    },
+    "new-feature-enterprise": {
+      "description": "Hardened delivery for regulated/high-stakes products: plan → implement → code-review → security-review → verify → PM acceptance. Use as the default pipeline for products that declared regulators at onboarding.",
+      "phases": [
+        {
+          "name": "plan",
+          "agent": "engineer-planner",
+          "model": "opus",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-PLAN]" }
+        },
+        {
+          "name": "implementation",
+          "agent": "engineer-implementer",
+          "model": "sonnet",
+          "team": false,
+          "worktree": true,
+          "gate": { "type": "quality-gate" },
+          "contextExtract": { "type": "jira-comments", "prefixes": ["[AUTO-PLAN]", "[AUTO-IMPLEMENT]"] }
+        },
+        {
+          "name": "code-review",
+          "agent": "engineer-reviewer",
+          "model": "opus",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-REVIEW]" }
+        },
+        {
+          "name": "security-review",
+          "agent": "security-agent",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-SECURITY-REVIEW]" }
+        },
+        {
+          "name": "verify",
+          "agent": "qa-agent",
+          "model": "sonnet",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-VERIFY]" }
+        },
+        {
+          "name": "acceptance",
+          "agent": "product-manager",
+          "model": "opus",
+          "gate": { "type": "comment-prefix", "prefix": "[AUTO-ACCEPT]" }
+        }
+      ]
     }
   },
   "dependencyGating": {

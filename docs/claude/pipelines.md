@@ -9,7 +9,8 @@ The runner includes a pipeline engine that sequences SDLC phases as isolated, re
 
 | Pipeline | Phases | Use Case |
 |----------|--------|----------|
-| `new-feature` | requirements → architecture → ux-design (optional) → implementation → code-review → security-review (optional) → verify → acceptance | Full SDLC (7 phases) |
+| `new-feature` | implementation → code-review → verify | Lean delivery (planning/requirements/UX happen in agent meetings) |
+| `new-feature-enterprise` | plan → implementation → code-review → security-review → verify → acceptance | Hardened delivery for regulated/high-stakes products (6 phases) |
 | `bug-fix` | implementation → code-review → verify | Streamlined bug fixes |
 | `security-fix` | implementation → security-review → verify | Security vulnerability fixes |
 | `design-bootstrap` | design-system → component-scaffold → acceptance | Greenfield design system bootstrap (3 phases) |

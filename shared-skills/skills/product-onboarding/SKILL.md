@@ -121,7 +121,7 @@ If a script key is absent from the root, set its scan value to `null` — do not
 3. Record as `scan.e2e.configPaths[]`, `scan.e2e.primaryConfig` (first found), `scan.e2e.testDir`, `scan.e2e.baseURL`, `scan.e2e.projectNames[]`.
 4. If no config found: set `scan.e2e.present = false`.
 
-Multiple configs are common in monorepos (e.g., EstateOS has `apps/web/e2e/feature/playwright-feature.config.ts` and `apps/web/e2e/playwright.config.ts` as separate configs for separate test layers). Record all of them.
+Multiple configs are common in monorepos (for example, `apps/web/e2e/feature/playwright-feature.config.ts` and `apps/web/e2e/playwright.config.ts` as separate configs for separate test layers). Record all of them.
 
 ### 3.5 Detect DB and Schema
 
@@ -170,6 +170,8 @@ For each frontend workspace:
 ## 4. Skill Generation Recipes
 
 After the scan is complete, generate the following five skill files into `<pluginDir>/<productId>-<name>/SKILL.md`. If `scan.largeMonorepo = true`, skip generating separate backend and frontend skills — include essential summaries from both in the engineer skill only, and note the limitation clearly.
+
+> The good/bad examples below reference **EstateOS** — a real estate-planning product these recipes were validated against. It is not part of this repository; the examples are illustrations of the expected output quality, not files you can open.
 
 ### Content Rules (Apply to All Five Skills)
 
@@ -509,7 +511,7 @@ Do not generate separate backend and frontend skills. Generate infra and brand a
 
 ### Scan finds a workspace with the same name as the product ID
 
-This is expected (e.g., `packages/estateos-backend` in EstateOS). Log it in the engineer skill's "Active Packages" section. Do not confuse these legacy scaffold packages with the authoritative backend or frontend apps.
+This is expected (e.g., a legacy `packages/<productId>-backend` scaffold alongside the authoritative `apps/api`). Log it in the engineer skill's "Active Packages" section. Do not confuse these legacy scaffold packages with the authoritative backend or frontend apps.
 
 ---
 
@@ -532,13 +534,13 @@ The following describes how the wizard uses this skill, step by step:
 - 3.6: Finds `infra/s3/`, `copilot/`, `deploy/ecs-task-definition.json`. No `k8s/`.
 
 **Wizard writes skill files (Section 4):**
-- Generates `estateos-engineer/SKILL.md` with pnpm workspace table, verbatim `type-check` script name, two-layer Playwright testing summary, and TypeScript project references.
-- Generates `estateos-backend/SKILL.md` with Fastify 5 plugin order (read from `apps/api/src/app.ts`), custom JWT token types (read from `apps/api/src/plugins/authentication.ts`), Prisma extension chain (`forOrganisation` + `withEncryption`), and route directory tree.
-- Generates `estateos-frontend/SKILL.md` with Next.js app-router structure, both Playwright config paths with exact `baseURL` values, and TanStack Query data fetching pattern.
-- Generates `estateos-infra/SKILL.md` covering Terraform S3/KMS, AWS Copilot ECS Fargate, and an explicit "What is Not Present" section for staging environment and database backup automation.
-- Generates `estateos-brand/SKILL.md` with the three hex values from Step 4, Tailwind class equivalents (`blue-900`, `teal-700`, `amber-400`), "Professional, reassuring, and precise" tone principles, UK English spelling list, and anti-pattern examples.
+- Generates `myproduct-engineer/SKILL.md` with pnpm workspace table, verbatim `type-check` script name, two-layer Playwright testing summary, and TypeScript project references.
+- Generates `myproduct-backend/SKILL.md` with Fastify 5 plugin order (read from `apps/api/src/app.ts`), custom JWT token types (read from `apps/api/src/plugins/authentication.ts`), Prisma extension chain (`forOrganisation` + `withEncryption`), and route directory tree.
+- Generates `myproduct-frontend/SKILL.md` with Next.js app-router structure, both Playwright config paths with exact `baseURL` values, and TanStack Query data fetching pattern.
+- Generates `myproduct-infra/SKILL.md` covering Terraform S3/KMS, AWS Copilot ECS Fargate, and an explicit "What is Not Present" section for staging environment and database backup automation.
+- Generates `myproduct-brand/SKILL.md` with the three hex values from Step 4, Tailwind class equivalents (`blue-900`, `teal-700`, `amber-400`), "Professional, reassuring, and precise" tone principles, UK English spelling list, and anti-pattern examples.
 
 **Wizard runs validation (Section 5):**
 - Confirms all five files exist, frontmatter is valid, `type-check` (with hyphen) is used throughout, Playwright paths match scan results, and brand hex values match user input exactly.
 
-**Wizard returns to the onboarding flow** and informs the user that product skills have been generated and are ready for review in `estateos-plugin/skills/`.
+**Wizard returns to the onboarding flow** and informs the user that product skills have been generated and are ready for review in `myproduct-plugin/skills/`.

@@ -13,6 +13,10 @@ tools:
   - Glob
   - Grep
   - mcp__sequential-thinking__sequentialthinking
+skills:
+  - __PRODUCT_ID__-engineer
+  - __PRODUCT_ID__-frontend
+  - qa-testing
 ---
 
 # UAT Agent — __PRODUCT_NAME__
