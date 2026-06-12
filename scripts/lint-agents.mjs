@@ -9,6 +9,9 @@
 //   - `name` must be kebab-case (lowercase letters, digits, hyphen) and unique within scope
 //   - `model` must be one of: opus, sonnet, haiku (case-insensitive), or include "opus"/"sonnet"/"haiku"
 //   - `tools` must be a non-empty list of strings
+//   - `mcp__<server>__*` tool entries must reference a server defined in a
+//     committed .mcp.json or the dynamic-server allowlist (warning by default;
+//     pass --strict-mcp or set LINT_MCP_STRICT=1 to make it an error)
 //   - Body (after frontmatter) must be non-empty and contain at least one Markdown heading
 //
 // Exit non-zero on any violation. Prints a summary line at the end.
@@ -18,6 +21,12 @@ import { join } from 'node:path';
 import yaml from 'js-yaml';
 
 const ROOT = process.cwd();
+const STRICT_MCP = process.argv.includes('--strict-mcp') || process.env.LINT_MCP_STRICT === '1';
+
+// MCP servers provisioned dynamically at runtime (n8n mcpTrigger workflows,
+// per-product setup) — not discoverable from any committed .mcp.json.
+// Keep this list short; prefer adding servers to a committed .mcp.json.
+const DYNAMIC_MCP_SERVERS = ['n8n-zai-mcp', 'memory', 'jira'];
 
 const SCAN_DIRS = [
   'templates/agents',
@@ -38,6 +47,28 @@ function discoverPluginDirs() {
     });
 }
 
+// Collect MCP server names from every committed .mcp.json-style file, plus
+// the dynamic-server allowlist above.
+function collectKnownMcpServers() {
+  const sources = [
+    'shared-skills/.mcp.json',
+    '.mcp.template.json',
+    ...readdirSync(ROOT)
+      .filter((name) => name.endsWith('-plugin'))
+      .map((name) => join(name, '.mcp.json')),
+  ];
+  const known = new Set(DYNAMIC_MCP_SERVERS);
+  for (const rel of sources) {
+    try {
+      const parsed = JSON.parse(readFileSync(join(ROOT, rel), 'utf8'));
+      for (const server of Object.keys(parsed.mcpServers || {})) known.add(server);
+    } catch {
+      // missing or unparseable file — fine, other sources may cover it
+    }
+  }
+  return known;
+}
+
 function listAgentFiles(dir) {
   try {
     return readdirSync(join(ROOT, dir))
@@ -50,20 +81,22 @@ function listAgentFiles(dir) {
 
 const ALLOWED_MODELS = ['opus', 'sonnet', 'haiku'];
 
-function lintFile(relPath) {
+function lintFile(relPath, knownServers) {
   const errors = [];
+  const warnings = [];
+  const result = { errors, warnings };
   const abs = join(ROOT, relPath);
   const raw = readFileSync(abs, 'utf8');
 
   if (!raw.startsWith('---\n')) {
     errors.push('File does not start with YAML frontmatter delimiter (`---`)');
-    return errors;
+    return result;
   }
 
   const end = raw.indexOf('\n---\n', 4);
   if (end === -1) {
     errors.push('Frontmatter not terminated with `\\n---\\n`');
-    return errors;
+    return result;
   }
 
   const yamlBlock = raw.slice(4, end);
@@ -74,12 +107,12 @@ function lintFile(relPath) {
     fm = yaml.load(yamlBlock);
   } catch (err) {
     errors.push(`YAML parse error: ${err.message}`);
-    return errors;
+    return result;
   }
 
   if (!fm || typeof fm !== 'object') {
     errors.push('Frontmatter did not parse to an object');
-    return errors;
+    return result;
   }
 
   if (!fm.name || typeof fm.name !== 'string') {
@@ -110,13 +143,32 @@ function lintFile(relPath) {
     errors.push('`tools` must be a list or comma-separated string');
   }
 
+  // MCP tool references must point at a known server.
+  const toolEntries = Array.isArray(fm.tools)
+    ? fm.tools.filter((t) => typeof t === 'string')
+    : typeof fm.tools === 'string'
+      ? fm.tools.split(',').map((t) => t.trim())
+      : [];
+  for (const tool of toolEntries) {
+    if (!tool.startsWith('mcp__')) continue;
+    const match = tool.match(/^mcp__(.+?)__/);
+    if (!match) {
+      errors.push(`Malformed MCP tool reference "${tool}" — expected mcp__<server>__<tool>`);
+      continue;
+    }
+    if (!knownServers.has(match[1])) {
+      const msg = `\`tools\` references MCP server "${match[1]}" (tool "${tool}") not found in any .mcp.json or the dynamic-server allowlist`;
+      (STRICT_MCP ? errors : warnings).push(msg);
+    }
+  }
+
   if (body.length === 0) {
     errors.push('Body is empty — agent needs a system prompt');
   } else if (!/^#{1,6}\s/m.test(body)) {
     errors.push('Body has no Markdown heading');
   }
 
-  return errors;
+  return result;
 }
 
 const targets = [
@@ -130,14 +182,18 @@ if (targets.length === 0) {
 }
 
 let failed = 0;
+let warned = 0;
 const namesSeen = new Map();
+const knownServers = collectKnownMcpServers();
 
 for (const rel of targets) {
-  const errs = lintFile(rel);
-  if (errs.length > 0) {
-    failed += 1;
+  const { errors: errs, warnings: warns } = lintFile(rel, knownServers);
+  if (errs.length > 0 || warns.length > 0) {
+    if (errs.length > 0) failed += 1;
+    warned += warns.length;
     console.error(`\n  ${rel}`);
     for (const e of errs) console.error(`    - ${e}`);
+    for (const w of warns) console.error(`    - warn: ${w}`);
   }
   // Track duplicate names within the same scope (shared vs plugin).
   const scope = rel.split('/').slice(0, -1).join('/');
@@ -167,4 +223,5 @@ if (failed > 0) {
   process.exit(1);
 }
 
-console.log(`All ${targets.length} agent files passed lint.`);
+const warnSuffix = warned > 0 ? ` (${warned} warning${warned === 1 ? '' : 's'})` : '';
+console.log(`All ${targets.length} agent files passed lint.${warnSuffix}`);

@@ -15,6 +15,13 @@
         "N8N_API_KEY": "${N8N_API_KEY}"
       }
     },
+    "n8n-jira-mcp": {
+      "type": "http",
+      "url": "http://n8n:5678/mcp/jira-mcp",
+      "headers": {
+        "Authorization": "Bearer ${N8N_MCP_AUTH_TOKEN}"
+      }
+    },
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],

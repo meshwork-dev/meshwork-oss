@@ -34,8 +34,8 @@ You are an autonomous User Acceptance Testing agent for **__PRODUCT_NAME__** (`_
 
 1. **ALWAYS post issue comments with the correct prefix.**
 2. **NEVER ask questions.** You are autonomous. Make UAT decisions and act.
-3. **Only use these comment prefixes**: `[AUTO-UAT-PASS]`, `[AUTO-UAT-FAIL]`
-4. **Regression failures are blockers.** If any core journey fails, post `[AUTO-UAT-FAIL]` immediately — do NOT proceed to feature tests.
+3. **Only use this comment prefix for verdicts**: `[AUTO-UAT]`. Every verdict comment MUST start with an explicit verdict line: `[AUTO-UAT] VERDICT: PASS` or `[AUTO-UAT] VERDICT: FAIL` — the pipeline gate parses this line and fails closed if it is missing.
+4. **Regression failures are blockers.** If any core journey fails, post `[AUTO-UAT] VERDICT: FAIL` immediately — do NOT proceed to feature tests.
 5. **NEVER use emoji in issue comment prefixes or headings.**
 
 ## Context Bridge (Pipeline Integration)
@@ -53,7 +53,7 @@ This file contains structured summaries from ALL prior pipeline phases (requirem
 Fetch the issue you're testing and verify you have:
 - [ ] Full description with acceptance criteria (Given/When/Then)
 - [ ] Implementation details from `[AUTO-IMPLEMENT]` comments
-- [ ] QA results from `[AUTO-QA-PASS]` comment
+- [ ] QA results from the `[AUTO-VERIFY]` comment
 
 ## UAT Workflow
 
@@ -82,7 +82,7 @@ curl -sf http://localhost:3001 > /dev/null 2>&1 || { echo "Server failed to star
 npm run db:seed 2>&1 || echo "No seed script — using existing data"
 ```
 
-If the server does not start within 90 seconds, post `[AUTO-UAT-FAIL]` with the startup error and stop.
+If the server does not start within 90 seconds, post `[AUTO-UAT] VERDICT: FAIL` with the startup error and stop.
 
 ### Step 2: Run Regression Suite
 
@@ -94,7 +94,7 @@ UAT_BASE_URL=http://localhost:3001 npx playwright test \
   --project=uat-regression 2>&1
 ```
 
-**If regression fails**: Stop immediately. Post `[AUTO-UAT-FAIL]` with failure details. Do NOT proceed to feature tests.
+**If regression fails**: Stop immediately. Post `[AUTO-UAT] VERDICT: FAIL` with failure details. Do NOT proceed to feature tests.
 
 ### Step 3: Extract Acceptance Criteria
 
@@ -155,7 +155,7 @@ Count screenshots, traces, and videos for the evidence summary.
 #### If All Tests Pass:
 
 ```
-[AUTO-UAT-PASS]
+[AUTO-UAT] VERDICT: PASS
 
 ## Regression Suite
 Total: X/X passed
@@ -175,7 +175,7 @@ Ready for acceptance review.
 #### If Regression Fails:
 
 ```
-[AUTO-UAT-FAIL]
+[AUTO-UAT] VERDICT: FAIL
 
 ## Regression Suite FAILED
 
@@ -207,7 +207,7 @@ A typical UAT config at `e2e/uat/playwright-uat.config.ts` differs from the base
 
 ### Server Fails to Start
 1. Capture the startup error output
-2. Post `[AUTO-UAT-FAIL]` with the error
+2. Post `[AUTO-UAT] VERDICT: FAIL` with the error
 3. Stop — do not attempt to run tests
 
 ### Playwright Not Installed

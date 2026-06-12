@@ -119,6 +119,7 @@ curl -H "x-runner-secret: $SECRET" http://localhost:3210/jobs/<jobId>/output
 | `[AUTO-UX]` | ux-agent | UX specification complete |
 | `[AUTO-VERIFY]` | qa-agent | Verification passed (code quality + browser tests) |
 | `[AUTO-VERIFY-FAIL]` | qa-agent | Verification failed |
+| `[AUTO-UAT]` | uat-agent | Browser UAT verdict (requires `VERDICT: PASS\|FAIL` line) |
 | `[AUTO-SECURITY-REVIEW]` | security-agent | Security review approved |
 | `[AUTO-SECURITY-BLOCKED]` | security-agent | Security review blocked |
 | `[AUTO-TROUBLESHOOT]` | ask-dave-agent | Problem diagnosed and resolved |

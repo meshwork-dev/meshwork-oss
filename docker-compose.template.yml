@@ -40,6 +40,7 @@ services:
       - JIRA_DOMAIN=${JIRA_DOMAIN:-}
       - JIRA_EMAIL=${JIRA_EMAIL:-}
       - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
+      - N8N_MCP_AUTH_TOKEN=${N8N_MCP_AUTH_TOKEN:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - SNYK_TOKEN=${SNYK_TOKEN:-}
       - ZAI_API_KEY=${ZAI_API_KEY:-}

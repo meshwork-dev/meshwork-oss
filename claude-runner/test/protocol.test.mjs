@@ -80,6 +80,25 @@ test("verdict: prefix absent → found false (gate fails closed upstream)", () =
   assert.deepEqual(r, { found: false, verdict: null });
 });
 
+test("verdict: canonical [AUTO-UAT] VERDICT lines parse", () => {
+  assert.equal(extractGateVerdict("[AUTO-UAT] VERDICT: PASS\n\n## Regression Suite", "[AUTO-UAT]").verdict, "PASS");
+  assert.equal(extractGateVerdict("[AUTO-UAT] VERDICT: FAIL\n\n## Regression Suite FAILED", "[AUTO-UAT]").verdict, "FAIL");
+});
+
+test("verdict: hyphenated [AUTO-UAT-PASS] style never matches an [AUTO-UAT] gate", () => {
+  // Regression-documents why uat-agent templates must not emit [AUTO-UAT-PASS]:
+  // the gate prefix substring "[AUTO-UAT]" (with closing bracket) never occurs.
+  const r = extractGateVerdict("[AUTO-UAT-PASS] all journeys green", "[AUTO-UAT]");
+  assert.deepEqual(r, { found: false, verdict: null });
+});
+
+test("verdict: [AUTO-ACCEPT] and [AUTO-REQUIREMENTS] gate forms", () => {
+  assert.equal(extractGateVerdict("[AUTO-ACCEPT] VERDICT: REJECTED\n[AUTO-ACCEPT-REJECTED]", "[AUTO-ACCEPT]").verdict, "REJECTED");
+  const r = extractGateVerdict("[AUTO-REQUIREMENTS] VERDICT: NEEDS-CLARIFICATION — persona unclear", "[AUTO-REQUIREMENTS]");
+  assert.equal(r.verdict, "NEEDS-CLARIFICATION");
+  assert.equal(GATE_NEGATIVE_VERDICTS.includes(r.verdict), true);
+});
+
 test("verdict: negative keyword outside the 600-char vicinity is ignored", () => {
   const padding = "x".repeat(700);
   const r = extractGateVerdict(`[AUTO-VERIFY] VERDICT: PASS ${padding} FAIL`, "[AUTO-VERIFY]");

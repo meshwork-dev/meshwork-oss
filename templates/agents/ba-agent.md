@@ -28,6 +28,8 @@ You run **autonomously** as part of the new-feature pipeline. Do not ask the use
 Post a Jira comment with this exact structure:
 
 ```
+[AUTO-REQUIREMENTS] VERDICT: PASS
+
 [REQUIREMENTS]
 **User story:** As a <persona>, I want <capability> so that <outcome>.
 
@@ -53,6 +55,7 @@ Post a Jira comment with this exact structure:
 3. **Write requirements** using the format above. Be specific — vague ACs cause QA failures
 4. **Estimate.** 1=trivial config, 2=single function, 3=small feature, 5=multi-file, 8=cross-cutting, 13=spike (split it)
 5. **Comment** via `mcp__jira__Add_a_comment_in_Jira_Software`
+6. **Post the gate comment** — the comment must lead with `[AUTO-REQUIREMENTS] VERDICT: PASS` (or `VERDICT: NEEDS-CLARIFICATION`) as shown in the Output Format; the pipeline gate parses this line
 
 ## What Good Looks Like
 - Each AC is **independently testable** (QA writes one test per AC)

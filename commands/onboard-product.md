@@ -315,7 +315,7 @@ Create the `<id>-plugin/` directory with the following structure:
 - **Advanced** (optional): `ba-agent`, `architect`, `ux-agent`, `qa-agent`, `ask-dave-agent`, `e2e-builder`, `uat-agent`
 - **Documentation** (optional): `user-guide-agent`, `video-renderer` — navigates the live app to produce screenshot-based user guides and tutorial videos
 
-For each selected agent, read the Meshwork version from `meshwork-plugin/agents/<agent>.md` as a reference template. Generate a product-specific version by substituting:
+For each selected agent, read the template from `templates/agents/<agent>.md` as a reference. Generate a product-specific version by substituting:
 
 - Product name, description, positioning (from product.json)
 - Jira project key and board ID
@@ -354,24 +354,27 @@ If the user provided minimal domain info in Step 6, generate a PM with placehold
 
 **`company-brief.md`**: Generate from product.json values — company overview, product description, target market, brand voice, tech stack, team structure.
 
-**`.mcp.json`**: Generate based on the integrations the user selected (Jira MCP if Jira enabled, CRM tools if sales enabled). Use `meshwork-plugin/.mcp.json` as a reference template.
+**`.mcp.json`**: Generate based on the integrations the user selected (CRM tools if sales enabled, etc.). Use `shared-skills/.mcp.json` as a reference for server entry shapes, and `docs/claude/integrations.md` for integration-specific setup. The `n8n-jira-mcp` entry already ships platform-wide in `shared-skills/.mcp.json` — do not duplicate it here.
 
 Always add a `memory` entry to the plugin `.mcp.json` using the container path:
 
 ```json
 "memory": {
   "command": "npx",
-  "args": ["-y", "@modelcontextprotocol/server-memory", "/home/node/.claude/memory/<id>.json"]
+  "args": ["-y", "@modelcontextprotocol/server-memory"],
+  "env": { "MEMORY_FILE_PATH": "/home/node/.claude/memory/<id>.json" }
 }
 ```
 
-(Replace `<id>` with the product ID.)
+(Replace `<id>` with the product ID.) This is the **only** place the memory
+server is provisioned — there is deliberately no platform-wide memory graph,
+so each product's observations stay isolated in its own file.
 
 **`.claude-plugin/marketplace.json`**: Product name, description, owner.
 
 **`.claude-plugin/plugin.json`**: Plugin descriptor with name and version.
 
-**`hooks/`**: Copy the safety hooks from `meshwork-plugin/hooks/` (these are product-agnostic).
+**`hooks/`**: Copy the safety hooks from `shared-skills/hooks/` (these are product-agnostic).
 
 **`skills/`** and **`commands/`**: Create empty directories. Tell the user they can add product-specific skills later.
 
@@ -383,7 +386,7 @@ Create a `.mcp.json` file at `<workingDir>/.mcp.json` (the product's codebase ro
 
 This file merges two sources:
 
-1. **Platform MCPs** — take every server from `$AUTODEV_DIR/.mcp.json` as-is. These already use `localhost` URLs, so copy them verbatim (including env-var refs like `${RUNNER_SECRET}`, `alwaysLoad` flags, and `Authorization` headers).
+1. **Platform MCPs** — take every server from `$AUTODEV_DIR/shared-skills/.mcp.json`. Adapt container URLs (`http://n8n:5678`, `http://runner:3210`) to `localhost` equivalents and preserve env-var refs like `${RUNNER_SECRET}` / `${N8N_MCP_AUTH_TOKEN}`, `alwaysLoad` flags, and `Authorization` headers.
 
 2. **Product plugin MCPs** — take every server from the plugin `.mcp.json` you just generated (`<id>-plugin/.mcp.json`). Adapt container URLs to host-accessible equivalents:
    - `http://n8n:5678` → `http://localhost:5678`
@@ -395,10 +398,11 @@ This file merges two sources:
    ```json
    "memory": {
      "command": "npx",
-     "args": ["-y", "@modelcontextprotocol/server-memory", "$HOME/.claude/memory/<id>.json"]
+     "args": ["-y", "@modelcontextprotocol/server-memory"],
+     "env": { "MEMORY_FILE_PATH": "$HOME/.claude/memory/<id>.json" }
    }
    ```
-   (The platform `.mcp.json` already has a `memory` entry pointing to `platform-memory.json` — the product override replaces it with a product-scoped path.)
+   (Memory is strictly per-product — the platform defines no memory server, so this entry is the product's only graph.)
 
 If a server key appears in both sources, the plugin version wins (it's more specific). Do not include duplicate keys.
 

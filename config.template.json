@@ -159,7 +159,13 @@
     "qa-agent": ["memory", "runner-admin", "playwright", "github"],
     "ask-dave-agent": ["memory", "runner-admin", "sequential-thinking", "github"],
     "e2e-builder": ["memory", "runner-admin", "github", "context7", "playwright"],
-    "uat-agent": ["memory", "runner-admin", "playwright", "github"]
+    "uat-agent": ["memory", "runner-admin", "playwright", "github"],
+    "jira-hygiene": ["n8n-jira-mcp"],
+    "branch-cleanup": ["n8n-jira-mcp"],
+    "ctx-cleanup": ["n8n-jira-mcp"],
+    "agent-coherence": ["n8n-jira-mcp"],
+    "skill-auditor": ["n8n-jira-mcp", "sequential-thinking"],
+    "memory-promoter": ["memory", "n8n-jira-mcp"]
   },
   "subtasks": {
     "enabled": true,

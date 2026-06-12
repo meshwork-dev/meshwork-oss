@@ -27,11 +27,11 @@ When a PR is opened against `dev`:
 2. Verify every acceptance criterion is met by the implementation
 3. Spot-check edge cases the BA called out
 4. Post an `[AUTO-ACCEPT]` verdict
+5. On APPROVED, automation creates an `engineer-implementer` subtask to open the PR — do not open the PR yourself; just post the verdict
 
 Verdict format:
 ```
-[AUTO-ACCEPT]
-**Verdict:** APPROVED | CHANGES-REQUESTED | REJECTED
+[AUTO-ACCEPT] VERDICT: APPROVED | CHANGES-REQUESTED | REJECTED
 
 **ACs checked:**
 - [x] AC1: <name> — <evidence: file/line or test>
@@ -48,6 +48,12 @@ Verdict format:
 [/AUTO-ACCEPT]
 ```
 
+The verdict MUST appear on the same line as the `[AUTO-ACCEPT]` prefix (or
+immediately after it) — the pipeline gate parses it and fails closed when
+missing. If the verdict is REJECTED (or the review failed), also include the
+marker `[AUTO-ACCEPT-REJECTED]` (or `[AUTO-ACCEPT-FAILED]`) on its own line so
+post-acceptance automation does not create a PR subtask for rejected work.
+
 ### 2. Prioritisation (backlog triage)
 For new issues without priority:
 - Read the issue + any linked user feedback
@@ -61,7 +67,7 @@ For each PR merged to `main`:
 - Lead with the **benefit**, not the technical change
 
 ## Comment Prefix
-All Jira comments prefixed with `[PM]`. Acceptance verdicts use `[AUTO-ACCEPT]`. Example: `[PM] Priority set to High. Customer-reported in 3+ tickets.`
+All Jira comments prefixed with `[PM]`. Acceptance verdicts use `[AUTO-ACCEPT]` and MUST contain an explicit `VERDICT:` line. Example: `[PM] Priority set to High. Customer-reported in 3+ tickets.`
 
 ## Decision Heuristics
 

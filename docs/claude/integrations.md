@@ -1,5 +1,56 @@
 # Integrations Reference
-> Referenced from CLAUDE.md. This file contains detailed documentation for Attio CRM, Sales Pipeline, Marketing Content Management, LinkedIn Engagement, UI Engineering, and Shared Team Email.
+> Referenced from CLAUDE.md. This file contains detailed documentation for Jira MCP, Attio CRM, Sales Pipeline, Marketing Content Management, LinkedIn Engagement, UI Engineering, and Shared Team Email.
+
+## Jira MCP (n8n-jira-mcp)
+
+`workflows/Jira_Actuator.json` contains an N8N **MCP Server Trigger** (path
+`jira-mcp`, bearer auth) that exposes ~40 Jira and Confluence operations as
+MCP tools named `mcp__n8n-jira-mcp__*` (e.g.
+`mcp__n8n-jira-mcp__Get_an_issue_in_Jira_Software`). The maintenance agents
+in `shared-skills/agents/` use these tools to read issues, comment, and
+create stories.
+
+**Automatic** (done by `setup.sh`):
+- Generates `N8N_MCP_AUTH_TOKEN` in `.env` (once, preserved on re-runs).
+- The client entry ships in `shared-skills/.mcp.json` and resolves the token
+  from the environment — nothing to edit:
+  ```json
+  "n8n-jira-mcp": {
+    "type": "http",
+    "url": "http://n8n:5678/mcp/jira-mcp",
+    "headers": { "Authorization": "Bearer ${N8N_MCP_AUTH_TOKEN}" }
+  }
+  ```
+  The URL is the trigger's production endpoint as seen from inside the
+  Compose network; confirm against the Production URL shown on the MCP
+  Server Trigger node in the N8N editor.
+
+**Manual one-time steps** (N8N UI):
+1. Import the workflow: `./scripts/import-workflows.sh workflows/Jira_Actuator.json`
+2. Create credential **"Jira MCP Bearer"** (HTTP Bearer Auth) with the
+   `N8N_MCP_AUTH_TOKEN` value from `.env`
+3. Create credential **"Jira SW Cloud"** (Jira Software Cloud API) with
+   `JIRA_EMAIL` + `JIRA_API_TOKEN` for `JIRA_DOMAIN`
+4. Bind: MCP Server Trigger → Jira MCP Bearer; every Jira/Confluence tool
+   node → Jira SW Cloud
+5. Activate the workflow
+
+**Degradation without Jira/N8N**: nothing to disable. The server entry is
+unreachable, so jobs get zero `n8n-jira-mcp` tools at zero token cost
+(`--strict-mcp-config` + `MCP_CONNECTION_NONBLOCKING`). Maintenance agents
+detect the missing tools and do their core work anyway, writing findings to
+`docs/reports/` instead of Jira; `jira-hygiene` (purely Jira-centric) exits
+immediately. There is no dispatch gating.
+
+**Agent memory note**: the `memory` MCP server is provisioned strictly
+per-product by `/onboard-product` (`<id>-plugin/.mcp.json` →
+`/home/node/.claude/memory/<id>.json`). There is deliberately no
+platform-wide memory graph — a shared default would leak observations
+between products. MCP scoping prevents accidental cross-product mixing,
+not adversarial access: all graphs live in the shared `~/.claude/memory/`
+mount, and an agent with Read/Bash could open another product's JSON
+directly. Hard isolation would require per-product volume mounts (known
+limitation).
 
 ## Attio CRM Integration
 
@@ -174,13 +225,14 @@ Issues with `[UI]` prefix in summary or `needs-ui-work` label are automatically 
    - Header Value: `Bearer <your-zai-api-key>`
 3. Create credential "ZaiMcp" (HTTP Bearer Auth) for MCP endpoint auth
 4. Activate the workflow
-5. Add MCP endpoint to Claude Code settings:
+5. Add MCP endpoint to the relevant `.mcp.json` (e.g. the product plugin's):
    ```json
    {
      "mcpServers": {
        "n8n-zai-mcp": {
-         "url": "https://your-n8n-host/webhook/zai-creative-mcp",
-         "auth": { "type": "bearer", "token": "<mcp-auth-token>" }
+         "type": "http",
+         "url": "http://n8n:5678/mcp/zai-creative-mcp",
+         "headers": { "Authorization": "Bearer <mcp-auth-token>" }
        }
      }
    }

@@ -285,6 +285,16 @@ generate_env() {
     env_set WEBHOOK_VERIFICATION_ENFORCE "false"
   fi
 
+  # Bearer token for the n8n Jira MCP trigger (referenced by
+  # shared-skills/.mcp.json). Generated once even when Jira is disabled —
+  # the entry is inert until the Jira_Actuator workflow is activated.
+  if [[ -z "$(env_get N8N_MCP_AUTH_TOKEN)" ]]; then
+    env_set N8N_MCP_AUTH_TOKEN "$(openssl rand -hex 24)"
+  fi
+
+  # Per-product agent memory graphs live here (bind-mounted into the runner).
+  mkdir -p "$HOME/.claude/memory"
+
   [[ -n "${JIRA_DOMAIN:-}" ]]                && env_set JIRA_DOMAIN                "$JIRA_DOMAIN"
   [[ -n "${JIRA_EMAIL:-}" ]]                 && env_set JIRA_EMAIL                 "$JIRA_EMAIL"
   [[ -n "${JIRA_API_TOKEN:-}" ]]             && env_set JIRA_API_TOKEN             "$JIRA_API_TOKEN"
@@ -532,6 +542,16 @@ print_summary() {
   [[ "$JIRA_ENABLED"     == "true" ]] && success "Jira integration active (${JIRA_DOMAIN})"
   [[ "$TELEGRAM_ENABLED" == "true" ]] && success "Telegram notifications active"
   [[ "$N8N_ENABLED"      == "true" ]] && success "N8N workflows: http://localhost:${N8N_PORT:-5678}"
+  if [[ "$JIRA_ENABLED" == "true" ]]; then
+    printf "\n"
+    printf "  ${BOLD}Jira MCP — finish in the N8N UI (one-time):${RESET}\n"
+    printf "    1. ./scripts/import-workflows.sh workflows/Jira_Actuator.json\n"
+    printf "    2. Create credential \"Jira MCP Bearer\" (HTTP Bearer Auth) with N8N_MCP_AUTH_TOKEN from .env\n"
+    printf "    3. Create credential \"Jira SW Cloud\" (JIRA_EMAIL + JIRA_API_TOKEN, domain JIRA_DOMAIN)\n"
+    printf "    4. Bind: MCP Server Trigger -> Jira MCP Bearer; Jira/Confluence tool nodes -> Jira SW Cloud\n"
+    printf "    5. Activate the Jira Actuator workflow\n"
+    printf "    Docs: docs/claude/integrations.md (Jira MCP section)\n"
+  fi
   printf "\n"
   info "Re-run ./setup.sh anytime to reconfigure or add another product."
   printf "\n"

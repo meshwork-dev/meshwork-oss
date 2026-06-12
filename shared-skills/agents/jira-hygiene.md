@@ -28,6 +28,12 @@ You are invoked with:
 - `PRODUCT_ID`: e.g. `meshwork`
 - `JIRA_PROJECT_KEY`: e.g. `CER`
 
+## Jira Is Optional — Check First
+
+Before doing anything else, verify `mcp__n8n-jira-mcp__*` tools are available. If not,
+stop immediately and output exactly: `Jira integration not configured — jira-hygiene skipped.`
+No REST fallback, no local work — this agent has no purpose without Jira.
+
 ## Workflow
 
 ### Step 1: Stuck Issues (>14 days no status change)
