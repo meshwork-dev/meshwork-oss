@@ -5,9 +5,12 @@ const crypto = require("crypto");
 const fs = require("fs");
 const db = require("../../db");
 const issueTracker = require("../../issue-tracker");
-const { config } = require("../config");
+const { config, DEFAULT_WORKING_DIR } = require("../config");
 const { convPath, loadConversation } = require("../conversations");
 const { requireSecret } = require("../middleware");
+const { products } = require("../products");
+const { createJob, enqueue, validateWorkingDir } = require("../worker");
+const { checkBudget } = require("../metrics");
 
 const { emitNotificationWebhook } = require("../callbacks");
 
@@ -110,7 +113,64 @@ function registerIssueRoutes(app) {
       const { status, actor } = req.body || {};
       if (!status) return res.status(400).json({ ok: false, error: "status is required" });
       const issue = await issueTracker.transitionIssue(req.params.key, status, actor);
-      return res.json({ ok: true, issue });
+
+      // Auto-dispatch a delivery job when an issue moves to in_progress
+      // (mirrors what Jira webhook → N8N → POST /run does in Jira mode).
+      let jobId = null;
+      if (status === "in_progress" && !issueTracker.isJiraEnabled()) {
+        try {
+          const budgetCheck = checkBudget();
+          if (budgetCheck.ok) {
+            const fullIssue = await issueTracker.getIssue(req.params.key);
+            if (fullIssue) {
+              // Resolve agent from issue labels using agentLabels map in config
+              const agentLabels = config.agentLabels || {};
+              let agent = "";
+              for (const label of (fullIssue.labels || [])) {
+                if (agentLabels[label]) { agent = agentLabels[label]; break; }
+              }
+
+              // Resolve workingDir from products by project key prefix
+              const projectKey = req.params.key.split("-")[0].toUpperCase();
+              let workingDir = null;
+              for (const [, product] of products) {
+                if ((product.jira?.projectKey || "").toUpperCase() === projectKey) {
+                  workingDir = product.workingDir;
+                  break;
+                }
+              }
+
+              const wd = validateWorkingDir(workingDir || DEFAULT_WORKING_DIR);
+              if (wd.ok) {
+                const job = createJob({
+                  mode: "delivery",
+                  jobIn: {},
+                  callbackUrl: null,
+                  fields: {
+                    issueKey: fullIssue.key,
+                    summary: fullIssue.summary || "",
+                    description: fullIssue.description || "",
+                    workingDir: wd.resolved,
+                    agent,
+                    slack: null,
+                    parentKey: fullIssue.parentKey || null,
+                    subtaskFiles: [],
+                    subtaskDepth: 0,
+                    isSubtask: !!fullIssue.parentKey,
+                  },
+                });
+                enqueue(job.jobId);
+                jobId = job.jobId;
+              }
+            }
+          }
+        } catch (dispatchErr) {
+          // Non-fatal — the transition itself succeeded; log and continue.
+          console.error(`[issues] Auto-dispatch failed for ${req.params.key}: ${dispatchErr.message}`);
+        }
+      }
+
+      return res.json({ ok: true, issue, ...(jobId ? { jobId, statusUrl: `/jobs/${jobId}` } : {}) });
     } catch (e) {
       return res.status(400).json({ ok: false, error: e.message });
     }
