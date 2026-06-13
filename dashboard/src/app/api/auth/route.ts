@@ -45,11 +45,17 @@ function loginRateLimited(ip: string): boolean {
 }
 
 function cookieOptions() {
+  // Default: secure in production. Override with COOKIE_SECURE=false for
+  // plain-HTTP deployments (e.g. internal LAN without TLS).
+  const secure =
+    process.env.COOKIE_SECURE !== undefined
+      ? process.env.COOKIE_SECURE !== "false"
+      : process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
     sameSite: "lax" as const,
     path: "/",
-    secure: process.env.NODE_ENV === "production",
+    secure,
   };
 }
 

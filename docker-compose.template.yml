@@ -81,6 +81,7 @@ services:
       - PORT=3100
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD}
       - RUNNER_SECRET=${RUNNER_SECRET}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
     depends_on:
       runner:
         condition: service_healthy
