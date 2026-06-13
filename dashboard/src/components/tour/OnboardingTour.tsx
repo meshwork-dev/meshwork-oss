@@ -21,7 +21,7 @@ const STEPS: Step[] = [
   {
     id: "issues",
     title: "Issue Tracker",
-    body: "Browse and manage your backlog — stories, bugs, tasks, and epics. Connect Jira in Settings to sync issues and trigger agent workflows automatically via webhooks.",
+    body: "Browse and manage your backlog — stories, bugs, tasks, and epics. Issues can be created here or synced automatically if you connect an external tracker like Jira.",
     tourTarget: "issues",
   },
   {
@@ -45,13 +45,13 @@ const STEPS: Step[] = [
   {
     id: "settings",
     title: "Integrations",
-    body: "Connect Jira, Telegram, Slack, and N8N here. Configure these before running your first pipeline — agent dispatch and notifications depend on them.",
+    body: "Optionally connect Jira, Telegram, Slack, and N8N. All integrations are optional — the runner works standalone, but connecting them unlocks automated dispatch and notifications.",
     tourTarget: "settings",
   },
   {
     id: "done",
     title: "You're ready",
-    body: "Start by configuring your integrations in Settings, then trigger a pipeline. Check the Guide tab for detailed docs.",
+    body: "Trigger a pipeline or start a chat with an agent to get going. Connect integrations in Settings whenever you're ready. Check the Guide tab for detailed docs.",
   },
 ];
 
