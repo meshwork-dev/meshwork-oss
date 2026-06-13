@@ -174,7 +174,9 @@ Each product gets:
 - A plugin directory with product-specific agents and skills
 - A working directory where code execution happens
 
-Add via `./setup.sh` or the `/onboard-product` command.
+Add a product via:
+- **Dashboard** (`/products` → Onboard Product) — 6-step wizard; Claude generates domain-aware agents automatically. Recommended.
+- **CLI** — `./setup.sh` (choose "Add another product") for basic scaffolding, or run `/onboard-product` inside Claude Code for the same guided experience without the UI.
 
 ## Development
 

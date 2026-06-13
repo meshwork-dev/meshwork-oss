@@ -23,8 +23,10 @@ const {
   resolvePluginDir,
   resolveSharedSkillsDir,
 } = require("../products");
-const { getTotalRunningCount, jobs, pipelines, queue, runningByProduct } = require("../state");
+const { getTotalRunningCount, jobs, jobEmitter, pipelines, queue, runningByProduct } = require("../state");
 const { nowIso, postJson } = require("../util");
+const { RUNNER_ROOT } = require("../config");
+const { createJob, enqueue } = require("../worker");
 
 
 function registerAdminRoutes(app) {
@@ -98,6 +100,71 @@ function registerAdminRoutes(app) {
       res.json({ ok: true, id, name: product.name });
     } catch (e) {
       res.status(500).json({ error: `Failed to reload product '${id}': ${e.message}` });
+    }
+  });
+
+  /**
+   * POST /api/products/onboard — dispatch a product-onboarder Claude job from pre-collected form data.
+   * The agent writes products/<id>/product.json and <id>-plugin/ non-interactively.
+   * Returns { ok, jobId, productId } immediately; track progress via GET /jobs/:id/log/stream.
+   */
+  app.post("/api/products/onboard", requireSecret, (req, res) => {
+    const body = req.body || {};
+
+    const name = (body.name || "").trim();
+    if (!name) return res.status(400).json({ ok: false, error: "name is required" });
+
+    const workingDir = (body.workingDir || "").trim();
+    if (!workingDir) return res.status(400).json({ ok: false, error: "workingDir is required" });
+
+    // Derive product id: lowercase, hyphens only
+    const productId = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!productId) return res.status(400).json({ ok: false, error: "could not derive a valid product id from name" });
+
+    // Reject if product already exists
+    const existingConfig = path.join(productsDir, productId, "product.json");
+    if (fs.existsSync(existingConfig)) {
+      return res.status(409).json({ ok: false, error: `Product '${productId}' already exists`, productId });
+    }
+
+    // The onboarder agent runs in the platform root so it can write to products/ and <id>-plugin/
+    const platformRoot = path.resolve(RUNNER_ROOT, "..");
+
+    const productData = { ...body, id: productId };
+    const prompt = `PRODUCT_DATA:\n${JSON.stringify(productData, null, 2)}\n\nGenerate the full product scaffold for product id "${productId}" as described in your instructions. Write all files relative to the current working directory (${platformRoot}).`;
+
+    const job = createJob({
+      mode: "agent",
+      jobIn: { agent: "product-onboarder", prompt, source: "ui-onboard" },
+      callbackUrl: null,
+      fields: {
+        agent: "product-onboarder",
+        prompt,
+        context: "",
+        workingDir: platformRoot,
+        issueKey: null,
+        _onboardProductId: productId,
+      },
+    });
+
+    enqueue(job.jobId);
+
+    res.json({ ok: true, jobId: job.jobId, productId });
+  });
+
+  // Auto-reload the product registry after a successful onboard job
+  jobEmitter.on("job:succeeded", (event) => {
+    const job = jobs.get(event.jobId);
+    if (!job || job.agent !== "product-onboarder" || !job._onboardProductId) return;
+    const productId = job._onboardProductId;
+    const configPath = path.join(productsDir, productId, "product.json");
+    if (!fs.existsSync(configPath)) return;
+    try {
+      const product = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      products.set(productId, product);
+      console.log(`[${nowIso()}] Auto-registered product '${productId}' after onboarding job ${event.jobId}`);
+    } catch (e) {
+      console.error(`[${nowIso()}] Failed to auto-register product '${productId}': ${e.message}`);
     }
   });
 

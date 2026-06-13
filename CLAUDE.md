@@ -196,6 +196,7 @@ All endpoints except `GET /health` require `x-runner-secret` header.
 - `GET  /pipelines/:id` — pipeline status
 - `GET  /events` — Server-Sent Events
 - `GET  /api/products` — list registered products
+- `POST /api/products/onboard` — dispatch Claude to generate a product scaffold from form data; returns `{ jobId, productId }`
 - `POST /api/products/:id/reload` — hot-reload a product's config
 
 ## Key Patterns
@@ -213,8 +214,11 @@ claude --plugin-dir shared-skills --plugin-dir <id>-plugin
 Each product's `product.json` maps a working directory to a plugin
 directory and project key.
 
-Onboarding: run `/onboard-product` inside Claude Code, or re-run
-`./setup.sh` and choose "Add another product."
+Onboarding: use the **dashboard** (`/products` → Onboard Product) — a
+6-step wizard that dispatches a `product-onboarder` Claude job to
+generate the full domain-aware scaffold automatically. Alternatively,
+run `/onboard-product` inside Claude Code, or re-run `./setup.sh` and
+choose "Add another product."
 
 ### Pipeline Engine
 

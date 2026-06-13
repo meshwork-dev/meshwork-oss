@@ -586,3 +586,57 @@ export interface Notification {
   link?: string;
   createdAt: string;
 }
+
+// Product onboarding input — mirrors the wizard's 6 sections
+export interface OnboardProductInput {
+  name: string;
+  description: string;
+  workingDir: string;
+  industry?: string;
+  targetMarket?: string;
+  jira?: {
+    projectKey?: string;
+    projectName?: string;
+    boardId?: string;
+    domain?: string;
+  };
+  confluence?: {
+    space?: string;
+    marketingSpace?: string;
+  };
+  techStack?: {
+    frontend?: string;
+    backend?: string;
+    database?: string;
+    orm?: string;
+    auth?: string;
+    packageManager?: string;
+    commands?: {
+      dev?: string;
+      build?: string;
+      test?: string;
+      lint?: string;
+      typeCheck?: string;
+    };
+  };
+  domain?: {
+    regulators?: Array<{ name: string; relevance?: string; keyRequirements?: string }>;
+    keyProcesses?: Array<{ name: string; mandatedSequence?: boolean; description?: string }>;
+    terminology?: Array<{ term: string; meaning?: string; commonMistake?: string }>;
+    domainPitfalls?: string[];
+    productAreas?: Array<{ name: string; description?: string }>;
+    competitors?: Array<{ name: string; url?: string }>;
+  };
+  branding?: {
+    companyName?: string;
+    website?: string;
+    email?: string;
+    tone?: string;
+    spelling?: string;
+    colors?: { primary?: string };
+  };
+  sprint?: { enabled?: boolean };
+  sales?: { crm?: string; enabled?: boolean };
+  marketing?: { linkedin?: { enabled?: boolean; competitors?: string[] } };
+  agents?: string[];
+}

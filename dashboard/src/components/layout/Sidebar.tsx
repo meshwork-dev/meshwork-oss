@@ -19,6 +19,7 @@ const nav = [
   { href: "/scheduled", label: "Scheduled", icon: "S" },
   { href: "/operations", label: "Operations", icon: "O" },
   { href: "/guide", label: "Guide", icon: "?" },
+  { href: "/products", label: "Products", icon: "◈" },
   { href: "/settings", label: "Settings", icon: "⚙", tourId: "settings" },
 ];
 

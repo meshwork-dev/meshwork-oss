@@ -7,7 +7,7 @@ import type {
   ScheduledItem, SkillUsageMap,
   Issue, IssueSearchResult, IssueDetail, IssueTransition, Notification,
   PipelineDefinition, PipelineDefinitionDetail, PipelineRoutingRule,
-  Product, IntegrationStatus,
+  Product, IntegrationStatus, OnboardProductInput,
 } from "./types";
 import { clearAuth } from "./auth";
 
@@ -381,9 +381,21 @@ export class RunnerAPI {
     return res.skillUsage || {};
   }
 
-  // Issues
+  // Products
   async listProducts(): Promise<Product[]> {
     return this.fetch<Product[]>("/api/products");
+  }
+
+  async onboardProduct(data: OnboardProductInput): Promise<{ ok: boolean; jobId: string; productId: string }> {
+    return this.fetch("/api/products/onboard", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+  }
+
+  async reloadProduct(id: string): Promise<{ ok: boolean; id: string; name: string }> {
+    return this.fetch(`/api/products/${encodeURIComponent(id)}/reload`, { method: "POST" });
   }
 
   async listIssues(params?: { status?: string; type?: string; project?: string; label?: string; assignee?: string; search?: string; parentKey?: string; limit?: number; offset?: number }): Promise<IssueSearchResult> {

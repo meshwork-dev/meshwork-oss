@@ -8,6 +8,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- **Product onboarding via dashboard** (`/products` → Onboard Product): 6-step
+  UI wizard (Basic → Project → Tech Stack → Domain Expertise → Agents → Review)
+  that dispatches a `product-onboarder` Claude agent job and generates the full
+  plugin scaffold non-interactively — `products/<id>/product.json`, domain-aware
+  `<id>-plugin/agents/` (including a domain-specialist PM), `company-brief.md`,
+  `.mcp.json`, hooks, and metadata. The product is auto-registered in the runner
+  on job completion. No terminal or Claude Code session required. New runner
+  endpoint `POST /api/products/onboard`; progress trackable via SSE log stream.
 - **Structured observations protocol** (`lib/observations.js`): gates marked
   `structured: true` (default: `code-review`) compute their verdict in the
   ENGINE from agent-submitted findings + AC checks via a thin policy layer

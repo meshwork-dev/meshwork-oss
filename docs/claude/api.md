@@ -66,6 +66,7 @@ All endpoints except `/health` require `x-runner-secret` header.
 
 ### Product Registry
 - `GET /api/products` - List all registered products (id, name, description, workingDir, pluginDir)
+- `POST /api/products/onboard` - Dispatch a `product-onboarder` Claude agent job that generates `products/<id>/product.json` and the full `<id>-plugin/` scaffold non-interactively. Body: `{ name, description, workingDir, industry?, targetMarket?, jira?, confluence?, techStack?, domain?, branding?, sprint?, agents? }`. Returns `{ ok, jobId, productId }`. Track progress via `GET /jobs/:id/log/stream`. Product is auto-registered on job success.
 - `POST /api/products/:id/reload` - Hot-reload a product config from disk without restarting the runner
 
 ### Dashboard & Lists
@@ -83,6 +84,7 @@ The dashboard is a Next.js 15 app in `dashboard/` that provides a modern UI for 
 
 **Pages:**
 - **Overview** (`/`) - Health status, summary stats, recent jobs
+- **Products** (`/products`) - Registered product list; **Onboard Product** button opens a 6-step wizard that dispatches a `product-onboarder` Claude job to generate the full domain-aware scaffold
 - **Jobs** (`/jobs`) - Filterable job list with status badges, click-through to detail
 - **Job Detail** (`/jobs/[id]`) - Full job info, output, error display
 - **Agents** (`/agents`) - Agent list + direct execution form
@@ -91,6 +93,7 @@ The dashboard is a Next.js 15 app in `dashboard/` that provides a modern UI for 
 - **Batches** (`/batches`) - Batch list with progress
 - **Conversations** (`/conversations`) - Conversation browser with message viewer
 - **Operations** (`/operations`) - Failed callbacks with replay/dismiss
+- **Settings** (`/settings`) - Integration configuration (Jira, Telegram, N8N, Slack)
 
 **Tech stack:** Next.js 15, React 19, Tailwind CSS 4, SWR (data fetching), Recharts (charts)
 

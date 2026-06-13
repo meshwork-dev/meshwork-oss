@@ -114,7 +114,7 @@ You'll get a structured plan back. No code is written — the planner's job is t
 
 ## What's next
 
-- **[Add a product](./onboarding.md)** — register another codebase. Run `./setup.sh` again and choose "Add product".
+- **[Add a product](./onboarding.md)** — register another codebase. Use the dashboard (`/products` → Onboard Product) for the full guided experience, or run `./setup.sh` again and choose "Add product".
 - **[Write your own agent](./agents.md)** — drop a Markdown file in `shared-skills/agents/` or your product plugin.
 - **[Wire up Jira](./integrations.md#jira)** — turn issue webhooks into agent runs.
 - **[Pipelines](./pipelines.md)** — chain agents into multi-phase SDLC flows (plan → implement → review → QA → UAT).
