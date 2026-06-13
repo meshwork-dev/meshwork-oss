@@ -78,7 +78,7 @@ services:
     environment:
       - NEXT_PUBLIC_RUNNER_URL=http://localhost:${RUNNER_PORT:-3210}
       - RUNNER_URL=http://runner:${RUNNER_PORT:-3210}
-      - PORT=${DASHBOARD_PORT:-3100}
+      - PORT=3100
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD}
       - RUNNER_SECRET=${RUNNER_SECRET}
     depends_on:
