@@ -1,5 +1,5 @@
 {
-  "port": 3210,
+  "port": "__RUNNER_PORT__",
   "host": "0.0.0.0",
   "jobTimeoutMinutes": 60,
   "maxConcurrency": 2,
@@ -36,8 +36,8 @@
     "dailyLimitUsd": 300,
     "hourlyLimitUsd": 100
   },
-  "dashboardOrigins": ["http://localhost:3100"],
-  "dashboardUrl": "http://localhost:3100",
+  "dashboardOrigins": ["http://localhost:__DASHBOARD_PORT__"],
+  "dashboardUrl": "http://localhost:__DASHBOARD_PORT__",
   "providers": {
     "claude": {
       "baseUrl": null,

@@ -1,5 +1,5 @@
 {
-  "port": 3210,
+  "port": "__RUNNER_PORT__",
   "host": "0.0.0.0",
   "jobTimeoutMinutes": 60,
   "maxConcurrencyPerProduct": 1,
@@ -22,8 +22,8 @@
   },
   "protectHealthEndpoint": true,
   "protectDashboard": true,
-  "dashboardOrigins": ["http://localhost:3100"],
-  "dashboardUrl": "http://localhost:3100",
+  "dashboardOrigins": ["http://localhost:__DASHBOARD_PORT__"],
+  "dashboardUrl": "http://localhost:__DASHBOARD_PORT__",
   "logRetentionDays": 30,
   "alerting": {
     "slackWebhookUrl": null

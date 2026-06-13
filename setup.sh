@@ -206,6 +206,11 @@ gather_config() {
   header "Outgoing Notifications (optional)"
   NOTIFICATION_WEBHOOK_URL="$(prompt_value "Outgoing webhook URL (Slack/Discord/Teams; blank to skip)")"
 
+  header "Ports"
+  RUNNER_PORT="$(prompt_value "Runner API port" "3210")"
+  DASHBOARD_PORT="$(prompt_value "Dashboard port" "3100")"
+  N8N_PORT="$(prompt_value "N8N port" "5678")"
+
   N8N_ENABLED=false
   if [[ "$JIRA_ENABLED" == "true" ]] || [[ "$NGROK_ENABLED" == "true" ]]; then
     N8N_ENABLED=true
@@ -234,6 +239,9 @@ load_existing_config() {
   POSTGRES_MODE="$(env_get POSTGRES_MODE)"
   POSTGRES_MODE="${POSTGRES_MODE:-bundled}"
   PROJECT_DIR="$(env_get PROJECT_DIR)"
+  RUNNER_PORT="$(env_get RUNNER_PORT)"; RUNNER_PORT="${RUNNER_PORT:-3210}"
+  DASHBOARD_PORT="$(env_get DASHBOARD_PORT)"; DASHBOARD_PORT="${DASHBOARD_PORT:-3100}"
+  N8N_PORT="$(env_get N8N_PORT)"; N8N_PORT="${N8N_PORT:-5678}"
   JIRA_ENABLED=false; [[ -n "$JIRA_DOMAIN" ]] && JIRA_ENABLED=true
   TELEGRAM_ENABLED=false; [[ -n "$TELEGRAM_BOT_TOKEN" ]] && TELEGRAM_ENABLED=true
   NGROK_ENABLED=false; [[ -n "$NGROK_DOMAIN" ]] && NGROK_ENABLED=true
@@ -259,6 +267,9 @@ generate_env() {
 
   env_set RUNNER_SECRET           "$RUNNER_SECRET"
   env_set DASHBOARD_PASSWORD      "$DASHBOARD_PASSWORD"
+  env_set RUNNER_PORT             "$RUNNER_PORT"
+  env_set DASHBOARD_PORT          "$DASHBOARD_PORT"
+  env_set N8N_PORT                "$N8N_PORT"
   env_set POSTGRES_MODE           "$POSTGRES_MODE"
   env_set RUNNER_DB_HOST          "$RUNNER_DB_HOST"
   env_set RUNNER_DB_PORT          "$RUNNER_DB_PORT"
@@ -331,6 +342,8 @@ generate_config() {
     --arg jira_host "${JIRA_DOMAIN#https://}" \
     --arg project_key "${PRODUCT_PREFIX:-PRJ}" \
     --arg n8n_url "${NGROK_DOMAIN:+https://${NGROK_DOMAIN}}" \
+    --arg runner_port "${RUNNER_PORT:-3210}" \
+    --arg dashboard_port "${DASHBOARD_PORT:-3100}" \
     '
     walk(
       if type == "string" then
@@ -341,10 +354,11 @@ generate_config() {
         elif . == "__N8N_PUBLIC_URL__"     then $n8n_url
         elif . == "__PLUGIN_DIR__"         then "shared-skills"
         elif . == "__PLATFORM_DIR__"       then "."
+        elif . == "__RUNNER_PORT__"        then ($runner_port | tonumber)
         elif . == "__TELEGRAM_ADMIN_CHAT_ID__" then ($ENV.TELEGRAM_CHAT_NOTIFICATIONS // "")
         elif . == "__TEAM_EMAIL__"         then ($ENV.TEAM_EMAIL // "")
         elif . == "__ADMIN_EMAIL__"        then ($ENV.ADMIN_EMAIL // "")
-        else .
+        else gsub("__DASHBOARD_PORT__"; $dashboard_port)
         end
       else .
       end
@@ -358,6 +372,8 @@ generate_config() {
       --arg jira_host "${JIRA_DOMAIN#https://}" \
       --arg project_key "${PRODUCT_PREFIX:-PRJ}" \
       --arg n8n_url "${NGROK_DOMAIN:+https://${NGROK_DOMAIN}}" \
+      --arg runner_port "${RUNNER_PORT:-3210}" \
+      --arg dashboard_port "${DASHBOARD_PORT:-3100}" \
       '
       walk(
         if type == "string" then
@@ -368,10 +384,11 @@ generate_config() {
           elif . == "__N8N_PUBLIC_URL__"     then $n8n_url
           elif . == "__PLUGIN_DIR__"         then "/shared-skills"
           elif . == "__PLATFORM_DIR__"       then "/app"
+          elif . == "__RUNNER_PORT__"        then ($runner_port | tonumber)
           elif . == "__TELEGRAM_ADMIN_CHAT_ID__" then ($ENV.TELEGRAM_CHAT_NOTIFICATIONS // "")
           elif . == "__TEAM_EMAIL__"         then ($ENV.TEAM_EMAIL // "")
           elif . == "__ADMIN_EMAIL__"        then ($ENV.ADMIN_EMAIL // "")
-          else .
+          else gsub("__DASHBOARD_PORT__"; $dashboard_port)
           end
         else .
         end
@@ -494,7 +511,35 @@ EOF
 }
 
 # =============================================================================
-# 9. Start services with profile selection
+# 9. Destroy deployment
+# =============================================================================
+destroy_deployment() {
+  header "Destroy deployment"
+  warn "This will stop and remove all containers, networks, and volumes."
+  warn "Config files (.env, config.json) will NOT be deleted."
+  if ! prompt_yn "Are you sure you want to destroy the deployment?" "n"; then
+    info "Aborted."
+    exit 0
+  fi
+
+  if [[ ! -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
+    error "docker-compose.yml not found — nothing to destroy."
+    exit 1
+  fi
+
+  load_existing_config 2>/dev/null || true
+
+  local profiles=()
+  [[ "${POSTGRES_MODE:-bundled}" == "bundled" ]] && profiles+=(--profile bundled-db)
+  [[ "${NGROK_ENABLED:-false}"   == "true"    ]] && profiles+=(--profile tunnel)
+
+  docker compose -f "$SCRIPT_DIR/docker-compose.yml" "${profiles[@]}" down -v --remove-orphans
+  success "Deployment destroyed."
+  info "Re-run ./setup.sh to start fresh."
+}
+
+# =============================================================================
+# 10. Start services with profile selection
 # =============================================================================
 start_services() {
   header "Starting Docker services"
@@ -524,7 +569,7 @@ start_services() {
 }
 
 # =============================================================================
-# 10. Summary
+# 11. Summary
 # =============================================================================
 print_summary() {
   printf "\n"
@@ -561,6 +606,11 @@ print_summary() {
 # Main
 # =============================================================================
 main() {
+  if [[ "${1:-}" == "--destroy" ]]; then
+    destroy_deployment
+    exit 0
+  fi
+
   print_banner
   check_prerequisites
   choose_mode
