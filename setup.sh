@@ -35,9 +35,9 @@ prompt_yn() {
 prompt_value() {
   local question="$1" default="${2:-}" value
   if [[ -n "$default" ]]; then
-    printf "  ${BOLD}%s${RESET} [%s]: " "$question" "$default"
+    printf "  ${BOLD}%s${RESET} [%s]: " "$question" "$default" >&2
   else
-    printf "  ${BOLD}%s${RESET}: " "$question"
+    printf "  ${BOLD}%s${RESET}: " "$question" >&2
   fi
   read -r value
   value="${value:-$default}"
@@ -46,9 +46,9 @@ prompt_value() {
 
 prompt_secret() {
   local question="$1" value
-  printf "  ${BOLD}%s${RESET}: " "$question"
+  printf "  ${BOLD}%s${RESET}: " "$question" >&2
   read -rs value
-  printf '\n'
+  printf '\n' >&2
   printf '%s' "$value"
 }
 
