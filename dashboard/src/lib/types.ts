@@ -374,9 +374,32 @@ export interface JobsQueryParams {
   order?: "asc" | "desc";
 }
 
+// Pipeline definition (template) types
+export interface PipelineDefinition {
+  name: string;
+  description?: string;
+  phases: number; // count only, for list display
+  builtin: boolean;
+}
+
+export interface PipelineDefinitionDetail {
+  name: string;
+  description?: string;
+  phases: Array<{
+    name: string;
+    agent: string;
+    gate?: { type: string; prefix?: string; file?: string };
+  }>;
+}
+
+export interface PipelineRoutingRule {
+  match: { issueType?: string; labels?: string[] };
+  pipelineType: string;
+}
+
 // Pipeline types
 export interface PipelineGate {
-  type: "comment-prefix" | "file-exists" | "quality-gate" | "security-pass" | "acceptance";
+  type: "comment-prefix" | "file-exists" | "quality-gate" | "security-pass" | "acceptance" | "human-approval";
   value: string;
   passed?: boolean;
   checkedAt?: string;
@@ -385,7 +408,7 @@ export interface PipelineGate {
 export interface PipelinePhase {
   name: string;
   agent: string;
-  status: "pending" | "running" | "succeeded" | "failed" | "skipped";
+  status: "pending" | "running" | "succeeded" | "completed" | "failed" | "skipped" | "awaiting-approval";
   gate?: PipelineGate;
   jobId?: string | null;
   startedAt?: string | null;
@@ -533,6 +556,23 @@ export interface IssueDetail {
   comments: IssueComment[];
   links: IssueLink[];
   subtasks: Issue[];
+}
+
+export interface Product {
+  id: string;
+  name: string;
+  description?: string;
+  workingDir: string;
+  pluginDir?: string | null;
+  projectKey?: string | null;
+}
+
+// Integration status types
+export interface IntegrationStatus {
+  jira: { enabled: boolean; domain?: string; email?: string; hasToken: boolean };
+  telegram: { enabled: boolean; hasToken: boolean; chatId?: string };
+  n8n: { enabled: boolean; callbackUrl?: string };
+  slack: { enabled: boolean; webhookUrl?: string };
 }
 
 // Notification types

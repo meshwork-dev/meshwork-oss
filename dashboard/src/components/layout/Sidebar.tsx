@@ -5,12 +5,12 @@ import { usePathname } from "next/navigation";
 
 const nav = [
   { href: "/", label: "Overview", icon: "H" },
-  { href: "/issues", label: "Issues", icon: "I" },
-  { href: "/chat", label: "Chat", icon: "T" },
+  { href: "/issues", label: "Issues", icon: "I", tourId: "issues" },
+  { href: "/chat", label: "Chat", icon: "T", tourId: "chat" },
   { href: "/jobs", label: "Jobs", icon: "J" },
-  { href: "/pipelines", label: "Pipelines", icon: "P" },
+  { href: "/pipelines", label: "Pipelines", icon: "P", tourId: "pipelines" },
   { href: "/worktrees", label: "Worktrees", icon: "W" },
-  { href: "/agents", label: "Agents", icon: "A" },
+  { href: "/agents", label: "Agents", icon: "A", tourId: "agents" },
   { href: "/office", label: "Office", icon: "3" },
   { href: "/metrics", label: "Metrics", icon: "M" },
   { href: "/batches", label: "Batches", icon: "B" },
@@ -19,6 +19,7 @@ const nav = [
   { href: "/scheduled", label: "Scheduled", icon: "S" },
   { href: "/operations", label: "Operations", icon: "O" },
   { href: "/guide", label: "Guide", icon: "?" },
+  { href: "/settings", label: "Settings", icon: "⚙", tourId: "settings" },
 ];
 
 const mobileNav = [
@@ -48,6 +49,7 @@ export function Sidebar() {
               <Link
                 key={item.href}
                 href={item.href}
+                {...(item.tourId ? { "data-tour": item.tourId } : {})}
                 className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                   active
                     ? "bg-teal-500/10 text-teal-400"

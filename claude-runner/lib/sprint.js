@@ -32,6 +32,29 @@ module.exports = {
 const { createPipeline, executePipelinePhase } = require("./pipelines");
 const { enqueue } = require("./worker");
 const { isBranchMergedToTrunk } = require("./worktrees");
+const { listPipelineRoutingRules } = require("./pipeline-definitions");
+
+/**
+ * Resolve the pipeline type for an issue using configured routing rules.
+ * Rules are evaluated in order; the first match wins.
+ * Falls back to null if no rule matches or the config is unreadable.
+ *
+ * @param {string} issueType  — e.g. "bug", "story", "sub-task"
+ * @param {string[]} labels   — issue label array
+ * @returns {string|null}
+ */
+function resolvePipelineType(issueType, labels) {
+  try {
+    const rules = listPipelineRoutingRules();
+    for (const rule of rules) {
+      const m = rule.match || {};
+      const typeMatch = !m.issueType || m.issueType === issueType;
+      const labelMatch = !m.labels?.length || m.labels.every(l => labels.includes(l));
+      if (typeMatch && labelMatch) return rule.pipelineType;
+    }
+  } catch { /* config unreadable — fall through */ }
+  return null;
+}
 
 
 // ─── Sprint Runner ──────────────────────────────────────────────────────────
@@ -623,7 +646,7 @@ async function tickSprintRunner() {
             console.log(`[sprint-runner] Dispatched ${issueKey} → agent:${agentName} (job: ${jobId}, product: ${productId})`);
           } else if (routeToPipeline) {
             // Implementation agents route through lean pipeline with agent override
-            const pipelineType = issueType === "bug" ? "bug-fix" : "new-feature";
+            const pipelineType = resolvePipelineType(issueType, labels) || (issueType === "bug" ? "bug-fix" : "new-feature");
             const parentKey = issue.fields?.parent?.key || null;
             const pipeline = await createPipeline(issueKey, pipelineType, {
               workingDir,
@@ -634,13 +657,14 @@ async function tickSprintRunner() {
             console.log(`[sprint-runner] Dispatched ${issueKey} → ${pipelineType} pipeline ${pipeline.pipelineId} with agent override ${agentName}${parentKey ? ` (parent: ${parentKey})` : ""} (product: ${productId})`);
           } else if (issueType === "bug" && isSubtask) {
             const parentKey = issue.fields?.parent?.key || null;
-            const pipeline = await createPipeline(issueKey, "bug-fix", {
+            const bugPipelineType = resolvePipelineType(issueType, labels) || "bug-fix";
+            const pipeline = await createPipeline(issueKey, bugPipelineType, {
               workingDir,
               labels,
               telegram,
               parentKey,
             });
-            console.log(`[sprint-runner] Dispatched ${issueKey} → bug-fix pipeline ${pipeline.pipelineId}${parentKey ? ` (parent: ${parentKey})` : ""} (product: ${productId})`);
+            console.log(`[sprint-runner] Dispatched ${issueKey} → ${bugPipelineType} pipeline ${pipeline.pipelineId}${parentKey ? ` (parent: ${parentKey})` : ""} (product: ${productId})`);
           } else if (issueType === "bug" && !isSubtask) {
             // Parent bug → send to bug-triage agent for analysis first
             const jobId = makeJobId();
@@ -701,15 +725,16 @@ async function tickSprintRunner() {
             });
             console.log(`[sprint-runner] Dispatched ${issueKey} → design-bootstrap pipeline ${pipeline.pipelineId} (product: ${productId})`);
           } else if (isSubtask) {
-            // Subtask without agent label → new-feature pipeline
+            // Subtask without agent label → new-feature pipeline (or routing-rule override)
             const parentKey = issue.fields?.parent?.key || null;
-            const pipeline = await createPipeline(issueKey, "new-feature", {
+            const subtaskPipelineType = resolvePipelineType(issueType, labels) || "new-feature";
+            const pipeline = await createPipeline(issueKey, subtaskPipelineType, {
               workingDir,
               labels,
               telegram,
               parentKey,
             });
-            console.log(`[sprint-runner] Dispatched ${issueKey} → new-feature pipeline ${pipeline.pipelineId}${parentKey ? ` (parent: ${parentKey})` : ""} (product: ${productId})`);
+            console.log(`[sprint-runner] Dispatched ${issueKey} → ${subtaskPipelineType} pipeline ${pipeline.pipelineId}${parentKey ? ` (parent: ${parentKey})` : ""} (product: ${productId})`);
           } else {
             // Parent Story/Task with no subtasks → send to engineer-planner for decomposition
             const jobId = makeJobId();

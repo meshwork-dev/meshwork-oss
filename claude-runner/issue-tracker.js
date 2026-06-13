@@ -424,6 +424,7 @@ const tracker = {
       }
       if (fields.priority) jiraFields.priority = { name: fields.priority.charAt(0).toUpperCase() + fields.priority.slice(1) };
       if (fields.labels) jiraFields.labels = fields.labels;
+      if (fields.parentKey) jiraFields.parent = { key: fields.parentKey };
 
       const res = await jiraPut(`/issue/${key}`, { fields: jiraFields });
       if (res.statusCode >= 200 && res.statusCode < 300) {

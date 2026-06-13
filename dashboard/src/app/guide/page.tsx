@@ -431,11 +431,25 @@ function APISection() {
 function GuidePage() {
   const [tab, setTab] = useState<Tab>("quickstart");
 
+  function handleStartTour() {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("meshwork:start-tour"));
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-white">Guide</h2>
-        <p className="text-sm text-zinc-400 mt-0.5">How to use Meshwork automation — triggers, agents, pipelines, and API</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-white">Guide</h2>
+          <p className="text-sm text-zinc-400 mt-0.5">How to use Meshwork automation — triggers, agents, pipelines, and API</p>
+        </div>
+        <button
+          onClick={handleStartTour}
+          className="shrink-0 rounded-lg border border-teal-500/40 bg-teal-500/10 px-3 py-1.5 text-sm font-medium text-teal-400 hover:bg-teal-500/20 hover:border-teal-500/60 transition-colors"
+        >
+          Take the tour
+        </button>
       </div>
 
       {/* Tabs */}

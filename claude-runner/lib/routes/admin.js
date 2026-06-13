@@ -5,6 +5,14 @@ const fs = require("fs");
 const path = require("path");
 const db = require("../../db");
 const { FAILED_CALLBACKS_DIR, SECRET, config } = require("../config");
+const {
+  listPipelineDefinitions,
+  savePipelineDefinition,
+  deletePipelineDefinition,
+  listPipelineRoutingRules,
+  savePipelineRoutingRules,
+  BUILTIN_NAMES,
+} = require("../pipeline-definitions");
 const { checkBudget, metrics, skillUsage, trackSkillUsage } = require("../metrics");
 const { requireSecret } = require("../middleware");
 const {
@@ -31,7 +39,8 @@ function registerAdminRoutes(app) {
         name: p.name,
         description: p.description,
         workingDir: p.workingDir,
-        pluginDir: p.pluginDir || null
+        pluginDir: p.pluginDir || null,
+        projectKey: p.jira?.projectKey || null,
       });
     }
     res.json(list);
@@ -814,6 +823,239 @@ function registerAdminRoutes(app) {
         },
       },
     });
+  });
+
+  /**
+   * ============================================================
+   * PIPELINE DEFINITIONS ENDPOINTS
+   * Manage user-defined pipeline templates (save/load/delete).
+   * Built-in pipelines are read-only.
+   * ============================================================
+   */
+
+  /**
+   * GET /api/pipeline-definitions
+   * List all pipeline templates (built-ins + saved user definitions).
+   * Returns summary only (no phase arrays) — phase count for display.
+   */
+  app.get("/api/pipeline-definitions", requireSecret, (req, res) => {
+    try {
+      const defs = listPipelineDefinitions();
+      const definitions = Object.entries(defs).map(([name, def]) => ({
+        name,
+        description: def.description || null,
+        phases: (def.phases || []).length,
+        builtin: BUILTIN_NAMES.has(name),
+      }));
+      res.json({ ok: true, definitions });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/pipeline-definitions/:name
+   * Return full detail (including phase array) for a single pipeline template.
+   */
+  app.get("/api/pipeline-definitions/:name", requireSecret, (req, res) => {
+    try {
+      const defs = listPipelineDefinitions();
+      const def = defs[req.params.name];
+      if (!def) return res.status(404).json({ ok: false, error: `Pipeline definition "${req.params.name}" not found` });
+      res.json({ ok: true, definition: { name: req.params.name, description: def.description || null, phases: def.phases || [] } });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/pipeline-definitions
+   * Create or update a user-defined pipeline template.
+   * Body: { name: string, description?: string, phases: PhaseInput[] }
+   */
+  app.post("/api/pipeline-definitions", requireSecret, (req, res) => {
+    const { name, description, phases } = req.body || {};
+
+    // Validate name
+    if (!name || typeof name !== "string") {
+      return res.status(400).json({ ok: false, error: "name is required" });
+    }
+    if (!/^[a-z0-9-]+$/.test(name) || name.length > 50) {
+      return res.status(400).json({ ok: false, error: "name must match /^[a-z0-9-]+$/ and be ≤50 chars" });
+    }
+
+    // Block built-in overwrite
+    if (BUILTIN_NAMES.has(name)) {
+      return res.status(400).json({ ok: false, error: "Cannot overwrite built-in pipeline" });
+    }
+
+    // Validate phases
+    if (!Array.isArray(phases) || phases.length === 0) {
+      return res.status(400).json({ ok: false, error: "phases must be a non-empty array" });
+    }
+    if (phases.length > 20) {
+      return res.status(400).json({ ok: false, error: "phases must have ≤20 entries" });
+    }
+
+    const VALID_GATE_TYPES = new Set(["comment-prefix", "quality-gate", "file-exists", "human-approval"]);
+    const agentToModel = (config.routing || {}).agentToModel || {};
+
+    // Validate and sanitize each phase (allowlist fields — no `condition` to prevent RCE)
+    const sanitizedPhases = [];
+    for (let i = 0; i < phases.length; i++) {
+      const p = phases[i];
+      if (!p.name || typeof p.name !== "string") {
+        return res.status(400).json({ ok: false, error: `phases[${i}].name is required` });
+      }
+      if (!p.agent || typeof p.agent !== "string") {
+        return res.status(400).json({ ok: false, error: `phases[${i}].agent is required` });
+      }
+      if (!agentToModel[p.agent]) {
+        return res.status(400).json({ ok: false, error: `phases[${i}].agent '${p.agent}' is not a known agent` });
+      }
+
+      // Build safe phase object from allowlist only (no `condition`, no extra fields)
+      const safe = { name: p.name, agent: p.agent };
+
+      if (p.gate) {
+        if (!VALID_GATE_TYPES.has(p.gate.type)) {
+          return res.status(400).json({ ok: false, error: `phases[${i}].gate.type must be one of: ${[...VALID_GATE_TYPES].join(", ")}` });
+        }
+        const safeGate = { type: p.gate.type };
+        if (p.gate.type === "comment-prefix") {
+          if (!p.gate.prefix || typeof p.gate.prefix !== "string") {
+            return res.status(400).json({ ok: false, error: `phases[${i}].gate.prefix is required for comment-prefix gate` });
+          }
+          safeGate.prefix = p.gate.prefix;
+        }
+        if (p.gate.type === "file-exists") {
+          if (!p.gate.file || typeof p.gate.file !== "string") {
+            return res.status(400).json({ ok: false, error: `phases[${i}].gate.file is required for file-exists gate` });
+          }
+          safeGate.file = p.gate.file;
+        }
+        safe.gate = safeGate;
+      }
+
+      if (p.maxRetries !== undefined && p.maxRetries !== null) {
+        if (!Number.isInteger(p.maxRetries) || p.maxRetries < 0 || p.maxRetries > 10) {
+          return res.status(400).json({ ok: false, error: `phases[${i}].maxRetries must be an integer 0–10` });
+        }
+        safe.maxRetries = p.maxRetries;
+      }
+      if (p.maxCostUsd !== undefined && p.maxCostUsd !== null) {
+        if (typeof p.maxCostUsd !== "number" || p.maxCostUsd <= 0) {
+          return res.status(400).json({ ok: false, error: `phases[${i}].maxCostUsd must be a positive number` });
+        }
+        safe.maxCostUsd = p.maxCostUsd;
+      }
+
+      sanitizedPhases.push(safe);
+    }
+
+    try {
+      savePipelineDefinition(name, {
+        description: description ? String(description) : undefined,
+        phases: sanitizedPhases,
+      });
+      res.json({ ok: true, name });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  /**
+   * DELETE /api/pipeline-definitions/:name
+   * Delete a user-defined pipeline template.
+   * Returns 400 if the name is a built-in.
+   */
+  app.delete("/api/pipeline-definitions/:name", requireSecret, (req, res) => {
+    const { name } = req.params;
+    if (BUILTIN_NAMES.has(name)) {
+      return res.status(400).json({ ok: false, error: "Cannot delete built-in pipeline" });
+    }
+    try {
+      deletePipelineDefinition(name);
+      res.json({ ok: true });
+    } catch (e) {
+      const status = e.message.includes("not found") ? 404 : 500;
+      res.status(status).json({ ok: false, error: e.message });
+    }
+  });
+
+  /**
+   * ============================================================
+   * PIPELINE ROUTING RULES ENDPOINTS
+   * Manage issue-type / label → pipelineType routing rules.
+   * ============================================================
+   */
+
+  /**
+   * GET /api/pipeline-routing
+   * Returns the current routing rules.
+   */
+  app.get("/api/pipeline-routing", requireSecret, (req, res) => {
+    try {
+      const rules = listPipelineRoutingRules();
+      res.json({ ok: true, rules });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  /**
+   * PUT /api/pipeline-routing
+   * Replace all routing rules.
+   * Body: { rules: RoutingRule[] }
+   * Each rule: { match: { issueType?, labels? }, pipelineType }
+   */
+  app.put("/api/pipeline-routing", requireSecret, (req, res) => {
+    const { rules } = req.body || {};
+
+    if (!Array.isArray(rules)) {
+      return res.status(400).json({ ok: false, error: "rules must be an array" });
+    }
+    if (rules.length > 50) {
+      return res.status(400).json({ ok: false, error: "rules must have ≤50 entries" });
+    }
+
+    const VALID_ISSUE_TYPES = new Set(["story", "bug", "subtask", "task", "epic"]);
+
+    // Gather all known pipeline type names (built-ins + saved user definitions)
+    let knownPipelineTypes;
+    try {
+      const savedDefs = listPipelineDefinitions();
+      knownPipelineTypes = new Set([...BUILTIN_NAMES, ...Object.keys(savedDefs)]);
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: `Failed to load pipeline definitions: ${e.message}` });
+    }
+
+    for (let i = 0; i < rules.length; i++) {
+      const rule = rules[i];
+      if (!rule.pipelineType || typeof rule.pipelineType !== "string") {
+        return res.status(400).json({ ok: false, error: `rules[${i}].pipelineType is required` });
+      }
+      if (!knownPipelineTypes.has(rule.pipelineType)) {
+        return res.status(400).json({ ok: false, error: `rules[${i}].pipelineType '${rule.pipelineType}' is not a known pipeline type` });
+      }
+
+      const m = rule.match || {};
+      if (m.issueType !== undefined && !VALID_ISSUE_TYPES.has(m.issueType)) {
+        return res.status(400).json({ ok: false, error: `rules[${i}].match.issueType must be one of: ${[...VALID_ISSUE_TYPES].join(", ")}` });
+      }
+      if (m.labels !== undefined) {
+        if (!Array.isArray(m.labels) || !m.labels.every(l => typeof l === "string")) {
+          return res.status(400).json({ ok: false, error: `rules[${i}].match.labels must be an array of strings` });
+        }
+      }
+    }
+
+    try {
+      savePipelineRoutingRules(rules);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
   });
 
   // Dashboard redirect (UI served by separate Next.js app)

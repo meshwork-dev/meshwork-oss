@@ -56,6 +56,7 @@ const { registerMeetingRoutes } = require("./lib/routes/meetings");
 const { registerPipelineRoutes } = require("./lib/routes/pipelines");
 const { registerScheduleRoutes } = require("./lib/routes/schedule");
 const { registerWorktreeRoutes } = require("./lib/routes/worktrees");
+const { registerIntegrationRoutes } = require("./lib/routes/integrations");
 
 
 const app = express();
@@ -160,6 +161,7 @@ registerBatchRoutes(app);
 registerIssueRoutes(app);
 registerPipelineRoutes(app);
 registerWorktreeRoutes(app);
+registerIntegrationRoutes(app);
 
 // Scheduler: check for due items every 60 seconds
 setInterval(() => {

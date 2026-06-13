@@ -329,9 +329,18 @@ function preserveBranchOnFailure(pipeline, phase) {
  */
 async function createPipeline(issueKey, pipelineType, options = {}) {
   const definitions = loadPipelineDefinitions();
-  const def = definitions[pipelineType];
-  if (!def) {
-    throw new Error(`Unknown pipeline type: ${pipelineType}`);
+
+  let def;
+  if (options.inlinePhases) {
+    def = {
+      description: options.description || "Custom pipeline",
+      phases: options.inlinePhases,
+    };
+  } else {
+    def = definitions[pipelineType];
+    if (!def) {
+      throw new Error(`Unknown pipeline type: ${pipelineType}`);
+    }
   }
 
   // Reject duplicate: if an active pipeline already exists for this issue, don't create another
@@ -369,13 +378,15 @@ async function createPipeline(issueKey, pipelineType, options = {}) {
 
   // Build phases, marking optional ones that fail their condition as skipped
   const phases = def.phases.map((phaseDef, index) => {
-    // Override implementation phase agent if subtask has an agent:* label
+    // Override implementation phase agent if subtask has an agent:* label.
+    // Not applied for inline pipelines — the caller already picked each agent explicitly.
     let phaseAgent = phaseDef.agent;
-    if (agentOverride && phaseDef.name === "implementation") {
+    if (!options.inlinePhases && agentOverride && phaseDef.name === "implementation") {
       phaseAgent = agentOverride;
       console.log(`[${nowIso()}] Pipeline ${pipelineId}: overriding implementation agent ${phaseDef.agent} → ${agentOverride} (label: ${agentOverrideLabel})`);
     }
-    const skip = phaseDef.optional && !evaluatePhaseCondition(phaseDef.condition, labels);
+    // Inline phases are never conditional — the caller hand-picked every phase.
+    const skip = !options.inlinePhases && phaseDef.optional && !evaluatePhaseCondition(phaseDef.condition, labels);
     return {
       index,
       name: phaseDef.name,
@@ -388,6 +399,8 @@ async function createPipeline(issueKey, pipelineType, options = {}) {
       condition: phaseDef.condition || null,
       gate: phaseDef.gate || null,
       contextExtract: phaseDef.contextExtract || null,
+      maxRetries: phaseDef.maxRetries ?? null,   // null = use global default
+      maxCostUsd: phaseDef.maxCostUsd ?? null,   // null = no cap
       status: skip ? "skipped" : "pending",
       jobId: null,
       startedAt: null,
@@ -903,6 +916,16 @@ function evaluateGate(pipeline, phase, job) {
       return { passed: true, reason: `File exists: ${gate.file}` };
     }
     return { passed: false, reason: `Required file not found: ${gate.file}` };
+  }
+
+  if (gate.type === "human-approval") {
+    if (phase.humanApproval?.approved === true) {
+      return { passed: true, reason: phase.humanApproval.reason || "Approved by human" };
+    }
+    if (phase.humanApproval?.approved === false) {
+      return { passed: false, reason: phase.humanApproval.reason || "Rejected by human" };
+    }
+    return { passed: false, waiting: true, reason: "Awaiting human approval" };
   }
 
   return { passed: true, reason: `Unknown gate type "${gate.type}" - defaulting to pass` };
@@ -1886,7 +1909,7 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
   // past phases that are already running. Without this guard, the pipeline
   // can leap from a completed phase straight to a later one, leaving the
   // current phase running and the pipeline marked completed prematurely.
-  if (phase.status === "completed" || phase.status === "failed" || phase.status === "skipped") {
+  if (phase.status === "completed" || phase.status === "failed" || phase.status === "skipped" || phase.status === "awaiting-approval") {
     console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} ignoring stale completion for phase ${phase.name} (status=${phase.status}, jobId=${job.jobId})`);
     return;
   }
@@ -1899,6 +1922,22 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
 
   phase.completedAt = nowIso();
 
+  // Per-phase cost cap: abort before retrying if this job already exceeded the budget
+  if (phase.maxCostUsd != null) {
+    const jobCost = job.usage?.estimatedCostUsd ?? 0;
+    if (jobCost >= phase.maxCostUsd) {
+      phase.status = "failed";
+      phase.error = `Phase cost $${jobCost.toFixed(4)} exceeded per-phase budget $${phase.maxCostUsd} — retries halted`;
+      pipeline.status = "failed";
+      pipeline.error = phase.error;
+      pipeline.completedAt = nowIso();
+      db.pipelines.set(pipeline).catch(e => console.error('[db] pipeline update failed: ' + e.message));
+      console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} phase ${phase.name} BUDGET EXCEEDED: ${phase.error}`);
+      jobEmitter.emit("pipeline:failed", { pipelineId: pipeline.pipelineId, issueKey: pipeline.issueKey, reason: phase.error });
+      return;
+    }
+  }
+
   if (job.status === "failed" || job.status === "quality-gate-failed" || job.status === "cancelled") {
     // Fix-loop: for quality-gate failures on eligible phases, re-dispatch with error context
     const fixLoopCfg = config.fixLoop || {};
@@ -1906,7 +1945,7 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
       job.status === "quality-gate-failed" &&
       phase.gate && (fixLoopCfg.gateTypes || ["quality-gate"]).includes(phase.gate.type);
 
-    if (isFixLoopEligible && phase.fixLoopAttempts < (fixLoopCfg.maxAttempts || 3)) {
+    if (isFixLoopEligible && phase.fixLoopAttempts < (phase.maxRetries ?? fixLoopCfg.maxAttempts ?? 3)) {
       // d3a: short-circuit fix-loop when the failing tests live entirely
       // outside the pipeline's diff (i.e. base branch was already red).
       // Only check after at least one fix-loop attempt to avoid false
@@ -1961,7 +2000,7 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
     }
 
     // Standard retry (non-quality-gate failures)
-    const maxPhaseRetries = 1;
+    const maxPhaseRetries = phase.maxRetries ?? 1;
     if (phase.retryCount < maxPhaseRetries && job.status !== "cancelled" && !isFixLoopEligible) {
       phase.retryCount++;
       phase.status = "pending";
@@ -2090,6 +2129,20 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
     }
   }
 
+  // Human-approval gate: pause and wait — do NOT advance yet.
+  if (gateResult.waiting) {
+    phase.status = "awaiting-approval";
+    db.pipelines.set(pipeline).catch(e => console.error('[db] pipeline update failed: ' + e.message));
+    jobEmitter.emit("pipeline:awaiting-approval", {
+      pipelineId: pipeline.pipelineId,
+      issueKey: pipeline.issueKey,
+      phase: phase.name,
+      phaseIndex,
+    });
+    console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} phase ${phase.name} AWAITING HUMAN APPROVAL`);
+    return;
+  }
+
   if (!gateResult.passed) {
     const verdict = gateResult.verdict || null;
 
@@ -2108,7 +2161,7 @@ async function onPipelinePhaseComplete(pipeline, phaseIndex, job) {
     // phase on the same code is pointless — go straight to the fix-loop so
     // the implementer can address the findings.
     const isDefinitiveNegativeVerdict = !!verdict && GATE_NEGATIVE_VERDICTS.includes(verdict);
-    const maxPhaseRetries = 1;
+    const maxPhaseRetries = phase.maxRetries ?? 1;
     if (!isDefinitiveNegativeVerdict && phase.retryCount < maxPhaseRetries) {
       phase.retryCount++;
       phase.status = "pending";

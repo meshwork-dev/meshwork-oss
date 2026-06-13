@@ -5,7 +5,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { Spinner } from "@/components/ui/Spinner";
 import { getAPI } from "@/lib/api";
-import type { Issue, IssueComment, IssueLink } from "@/lib/types";
+import type { Issue, IssueComment, IssueLink, Product } from "@/lib/types";
 import { useEffect, useState, useCallback } from "react";
 
 // ---- Helpers ----
@@ -171,38 +171,66 @@ function IssueListRow({ issue, onClick }: { issue: Issue; onClick: () => void })
 
 // ---- CreateModal ----
 
+interface CreateDefaults {
+  parentKey?: string;
+  project?: string;
+  type?: string;
+}
+
 function CreateModal({
   onClose,
   onCreated,
+  defaults,
 }: {
   onClose: () => void;
   onCreated: () => void;
+  defaults?: CreateDefaults;
 }) {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [parentOptions, setParentOptions] = useState<Issue[]>([]);
   const [form, setForm] = useState({
-    project: "CP",
-    type: "task",
+    project: defaults?.project ?? "",
+    type: defaults?.type ?? "task",
     summary: "",
     description: "",
     priority: "medium",
     labels: "",
-    parentKey: "",
+    parentKey: defaults?.parentKey ?? "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  async function handleSubmit(e: React.FormEvent) {
+  // Load known products for the project dropdown
+  useEffect(() => {
+    getAPI()?.listProducts().then((ps) => {
+      setProducts(ps);
+      // Set default project from first product if not pre-filled
+      if (!defaults?.project && ps.length > 0) {
+        const firstKey = ps[0].projectKey || ps[0].id.toUpperCase();
+        setForm((f) => f.project ? f : { ...f, project: firstKey });
+      }
+    }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load parent options when type changes (epics are parents of stories/tasks/bugs; stories are parents of subtasks)
+  useEffect(() => {
+    if (form.type === "epic") { setParentOptions([]); return; }
+    const parentType = form.type === "subtask" ? "story" : "epic";
+    getAPI()?.listIssues({ type: parentType, limit: 100 })
+      .then((r) => setParentOptions(r.issues ?? []))
+      .catch(() => setParentOptions([]));
+  }, [form.type]);
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!form.summary.trim()) {
-      setError("Summary is required.");
-      return;
-    }
+    if (!form.summary.trim()) { setError("Summary is required."); return; }
     setSaving(true);
     setError("");
     try {
       const api = getAPI();
       if (!api) throw new Error("API not initialised");
       await api.createIssue({
-        project: form.project.trim() || "CP",
+        project: form.project.trim() || "APP",
         type: form.type as Issue["type"],
         summary: form.summary.trim(),
         description: form.description.trim() || undefined,
@@ -219,35 +247,50 @@ function CreateModal({
     }
   }
 
+  const projectKey = form.project || (products[0]?.projectKey ?? "");
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-lg shadow-2xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
           <h3 className="text-base font-semibold text-white">New Issue</h3>
-          <button
-            onClick={onClose}
-            className="text-zinc-500 hover:text-zinc-200 transition-colors text-lg leading-none"
-          >
-            x
-          </button>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-200 transition-colors text-lg leading-none">×</button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-3">
+            {/* Project — dropdown from known products */}
             <div>
-              <label className="block text-xs text-zinc-400 mb-1">Project key</label>
-              <input
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500"
-                value={form.project}
-                onChange={(e) => setForm((f) => ({ ...f, project: e.target.value }))}
-                placeholder="CP"
-              />
+              <label className="block text-xs text-zinc-400 mb-1">Project</label>
+              {products.length > 0 ? (
+                <select
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-teal-500"
+                  value={projectKey}
+                  onChange={(e) => setForm((f) => ({ ...f, project: e.target.value }))}
+                >
+                  {products.map((p) => {
+                    const key = p.projectKey || p.id.toUpperCase();
+                    return (
+                      <option key={p.id} value={key}>
+                        {p.name} ({key})
+                      </option>
+                    );
+                  })}
+                </select>
+              ) : (
+                <input
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500 font-mono uppercase"
+                  value={form.project}
+                  onChange={(e) => setForm((f) => ({ ...f, project: e.target.value.toUpperCase() }))}
+                  placeholder="APP"
+                />
+              )}
             </div>
             <div>
               <label className="block text-xs text-zinc-400 mb-1">Type</label>
               <select
                 className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-teal-500"
                 value={form.type}
-                onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
+                onChange={(e) => setForm((f) => ({ ...f, type: e.target.value, parentKey: defaults?.parentKey ?? "" }))}
               >
                 <option value="epic">Epic</option>
                 <option value="story">Story</option>
@@ -295,15 +338,27 @@ function CreateModal({
                 <option value="lowest">Lowest</option>
               </select>
             </div>
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">Parent key</label>
-              <input
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500 font-mono"
-                value={form.parentKey}
-                onChange={(e) => setForm((f) => ({ ...f, parentKey: e.target.value }))}
-                placeholder="e.g. CP-42"
-              />
-            </div>
+            {/* Parent — dropdown from known issues, hidden for epics */}
+            {form.type !== "epic" && (
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1">
+                  {form.type === "subtask" ? "Parent story" : "Epic"}
+                </label>
+                <select
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-teal-500 font-mono"
+                  value={form.parentKey}
+                  onChange={(e) => setForm((f) => ({ ...f, parentKey: e.target.value }))}
+                  disabled={!!defaults?.parentKey}
+                >
+                  <option value="">None</option>
+                  {parentOptions.map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.key} — {p.summary.length > 35 ? p.summary.slice(0, 35) + "…" : p.summary}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           <div>
@@ -312,7 +367,7 @@ function CreateModal({
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500"
               value={form.labels}
               onChange={(e) => setForm((f) => ({ ...f, labels: e.target.value }))}
-              placeholder="needs-requirements, needs-ux-design"
+              placeholder="needs-requirements, agent:implementer"
             />
           </div>
 
@@ -323,18 +378,10 @@ function CreateModal({
           )}
 
           <div className="flex justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm text-zinc-400 hover:text-white border border-zinc-700 rounded-lg hover:bg-zinc-800 transition-colors"
-            >
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-white border border-zinc-700 rounded-lg hover:bg-zinc-800 transition-colors">
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 text-sm font-semibold bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
+            <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-semibold bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
               {saving && <Spinner size="sm" />}
               Create Issue
             </button>
@@ -345,31 +392,104 @@ function CreateModal({
   );
 }
 
+// ---- EpicPicker (inline) ----
+
+function EpicPicker({
+  currentKey,
+  onSelect,
+  onCancel,
+}: {
+  currentKey?: string;
+  onSelect: (key: string | null) => void;
+  onCancel: () => void;
+}) {
+  const [epics, setEpics] = useState<Issue[]>([]);
+  const [selected, setSelected] = useState(currentKey ?? "");
+
+  useEffect(() => {
+    getAPI()?.listIssues({ type: "epic", limit: 100 })
+      .then((r) => setEpics(r.issues ?? []))
+      .catch(() => {});
+  }, []);
+
+  return (
+    <div className="flex items-center gap-2 mt-1">
+      <select
+        className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-teal-500 font-mono"
+        value={selected}
+        onChange={(e) => setSelected(e.target.value)}
+        autoFocus
+      >
+        <option value="">— No epic —</option>
+        {epics.map((e) => (
+          <option key={e.key} value={e.key}>
+            {e.key} — {e.summary.length > 40 ? e.summary.slice(0, 40) + "…" : e.summary}
+          </option>
+        ))}
+      </select>
+      <button
+        onClick={() => onSelect(selected || null)}
+        className="px-2 py-1.5 text-xs font-semibold bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition-colors"
+      >
+        Save
+      </button>
+      <button
+        onClick={onCancel}
+        className="px-2 py-1.5 text-xs text-zinc-400 hover:text-white border border-zinc-700 rounded-lg hover:bg-zinc-800 transition-colors"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
 // ---- DetailPanel ----
 
 function DetailPanel({
   issue,
   onClose,
   onRefresh,
+  onAddChild,
 }: {
   issue: Issue;
   onClose: () => void;
   onRefresh: () => void;
+  onAddChild: (defaults: CreateDefaults) => void;
 }) {
-  const [detail, setDetail] = useState<{ comments: IssueComment[]; links: IssueLink[]; subtasks: Issue[] } | null>(null);
+  const [detail, setDetail] = useState<{ comments: IssueComment[]; links: IssueLink[]; subtasks: Issue[]; children: Issue[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [newComment, setNewComment] = useState("");
   const [commenting, setCommenting] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
+  const [epicPickerOpen, setEpicPickerOpen] = useState(false);
+  const [savingEpic, setSavingEpic] = useState(false);
+  const [localParentKey, setLocalParentKey] = useState(issue.parentKey);
 
-  useEffect(() => {
+  const loadDetail = useCallback(async () => {
     setLoading(true);
-    getAPI()
-      ?.getIssue(issue.key)
-      .then((d) => setDetail({ comments: d.comments, links: d.links, subtasks: d.subtasks }))
-      .catch(() => setDetail({ comments: [], links: [], subtasks: [] }))
-      .finally(() => setLoading(false));
-  }, [issue.key]);
+    try {
+      const api = getAPI();
+      if (!api) return;
+      const [d, childrenRes] = await Promise.all([
+        api.getIssue(issue.key),
+        issue.type === "epic"
+          ? api.listIssues({ parentKey: issue.key, limit: 50 })
+          : Promise.resolve({ issues: [] as Issue[], total: 0, ok: true }),
+      ]);
+      setDetail({
+        comments: d.comments,
+        links: d.links,
+        subtasks: d.subtasks,
+        children: childrenRes.issues ?? [],
+      });
+    } catch {
+      setDetail({ comments: [], links: [], subtasks: [], children: [] });
+    } finally {
+      setLoading(false);
+    }
+  }, [issue.key, issue.type]);
+
+  useEffect(() => { loadDetail(); }, [loadDetail]);
 
   async function handleTransition(status: string) {
     setTransitioning(true);
@@ -390,12 +510,25 @@ function DetailPanel({
     try {
       await getAPI()?.addIssueComment(issue.key, newComment.trim());
       setNewComment("");
-      const d = await getAPI()?.getIssue(issue.key);
-      if (d) setDetail({ comments: d.comments, links: d.links, subtasks: d.subtasks });
+      loadDetail();
     } catch {
       // silently ignore
     } finally {
       setCommenting(false);
+    }
+  }
+
+  async function handleSetEpic(epicKey: string | null) {
+    setSavingEpic(true);
+    setEpicPickerOpen(false);
+    try {
+      await getAPI()?.updateIssue(issue.key, { parentKey: epicKey ?? undefined });
+      setLocalParentKey(epicKey ?? undefined);
+      onRefresh();
+    } catch {
+      // silently ignore
+    } finally {
+      setSavingEpic(false);
     }
   }
 
@@ -421,12 +554,7 @@ function DetailPanel({
             </div>
             <h3 className="text-sm font-semibold text-white leading-snug">{issue.summary}</h3>
           </div>
-          <button
-            onClick={onClose}
-            className="ml-3 text-zinc-500 hover:text-zinc-200 text-xl leading-none flex-shrink-0"
-          >
-            x
-          </button>
+          <button onClick={onClose} className="ml-3 text-zinc-500 hover:text-zinc-200 text-xl leading-none flex-shrink-0">×</button>
         </div>
 
         {/* Metadata */}
@@ -452,16 +580,47 @@ function DetailPanel({
               <p className="text-zinc-300 mt-0.5">{issue.storyPoints}</p>
             </div>
           )}
-          {issue.parentKey && (
-            <div>
-              <span className="text-zinc-500">Parent</span>
-              <p className="text-zinc-300 mt-0.5 font-mono">{issue.parentKey}</p>
-            </div>
-          )}
           <div>
             <span className="text-zinc-500">Updated</span>
             <p className="text-zinc-300 mt-0.5">{fmtDate(issue.updatedAt)}</p>
           </div>
+
+          {/* Epic field — shown for non-epic issues */}
+          {issue.type !== "epic" && (
+            <div className="col-span-2">
+              <span className="text-zinc-500">Epic</span>
+              {epicPickerOpen ? (
+                <EpicPicker
+                  currentKey={localParentKey}
+                  onSelect={handleSetEpic}
+                  onCancel={() => setEpicPickerOpen(false)}
+                />
+              ) : (
+                <div className="flex items-center gap-2 mt-0.5">
+                  {localParentKey ? (
+                    <span className="font-mono text-purple-400">{localParentKey}</span>
+                  ) : (
+                    <span className="text-zinc-600 italic">None</span>
+                  )}
+                  <button
+                    onClick={() => setEpicPickerOpen(true)}
+                    disabled={savingEpic}
+                    className="text-[10px] text-zinc-500 hover:text-teal-400 underline underline-offset-2 transition-colors disabled:opacity-50"
+                  >
+                    {savingEpic ? "Saving…" : localParentKey ? "Change" : "Set epic"}
+                  </button>
+                  {localParentKey && !savingEpic && (
+                    <button
+                      onClick={() => handleSetEpic(null)}
+                      className="text-[10px] text-zinc-600 hover:text-red-400 underline underline-offset-2 transition-colors"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Labels */}
@@ -505,11 +664,42 @@ function DetailPanel({
 
         {/* Loading or detail content */}
         {loading ? (
-          <div className="flex justify-center py-10">
-            <Spinner size="sm" />
-          </div>
+          <div className="flex justify-center py-10"><Spinner size="sm" /></div>
         ) : (
           <>
+            {/* Epic children — only shown for epics */}
+            {issue.type === "epic" && (
+              <div className="px-4 py-3 border-b border-zinc-800">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-zinc-500">
+                    Children ({detail?.children.length ?? 0})
+                  </p>
+                  <button
+                    onClick={() => onAddChild({ parentKey: issue.key, project: issue.project })}
+                    className="text-[10px] text-teal-400 hover:text-teal-300 border border-teal-600/40 hover:border-teal-500/60 rounded px-2 py-0.5 transition-colors"
+                  >
+                    + Add child
+                  </button>
+                </div>
+                {detail && detail.children.length === 0 ? (
+                  <p className="text-xs text-zinc-700 italic">No child issues yet.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {detail?.children.map((child) => (
+                      <div key={child.key} className="flex items-center gap-2 text-xs bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2">
+                        <span className={`inline-flex items-center px-1 py-0.5 rounded text-[9px] font-semibold uppercase ${TYPE_COLORS[child.type] ?? TYPE_COLORS.task}`}>
+                          {child.type}
+                        </span>
+                        <span className="font-mono text-zinc-500 flex-shrink-0">{child.key}</span>
+                        <span className="text-zinc-300 truncate flex-1">{child.summary}</span>
+                        <span className="text-zinc-600 capitalize flex-shrink-0">{child.status.replace("_", " ")}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Subtasks */}
             {detail && detail.subtasks.length > 0 && (
               <div className="px-4 py-3 border-b border-zinc-800">
@@ -546,9 +736,7 @@ function DetailPanel({
 
             {/* Comments */}
             <div className="px-4 py-3 flex-1">
-              <p className="text-xs text-zinc-500 mb-3">
-                Comments ({detail?.comments.length ?? 0})
-              </p>
+              <p className="text-xs text-zinc-500 mb-3">Comments ({detail?.comments.length ?? 0})</p>
               <div className="space-y-3 mb-4">
                 {detail?.comments.map((c) => (
                   <div key={c.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
@@ -563,8 +751,6 @@ function DetailPanel({
                   <p className="text-xs text-zinc-700 italic">No comments yet.</p>
                 )}
               </div>
-
-              {/* Add comment */}
               <div className="space-y-2">
                 <textarea
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-teal-500 resize-none"
@@ -661,7 +847,6 @@ function FilterBar({
       )}
 
       <div className="ml-auto flex items-center gap-2">
-        {/* View toggle */}
         <div className="flex bg-zinc-800 border border-zinc-700 rounded-lg overflow-hidden">
           <button
             onClick={() => onViewChange("board")}
@@ -698,7 +883,7 @@ function IssuesPage() {
   const [filters, setFilters] = useState<Filters>({ search: "", type: "", priority: "", status: "" });
   const [view, setView] = useState<"board" | "list">("board");
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
+  const [createDefaults, setCreateDefaults] = useState<CreateDefaults | null>(null);
 
   const fetchIssues = useCallback(async () => {
     setLoading(true);
@@ -720,14 +905,16 @@ function IssuesPage() {
     }
   }, [filters.status, filters.type, filters.search]);
 
-  useEffect(() => {
-    fetchIssues();
-  }, [fetchIssues]);
+  useEffect(() => { fetchIssues(); }, [fetchIssues]);
 
-  // Client-side priority filter (priority not always supported server-side)
   const filteredIssues = filters.priority
     ? issues.filter((i) => i.priority === filters.priority)
     : issues;
+
+  function handleAddChild(defaults: CreateDefaults) {
+    setSelectedIssue(null);
+    setCreateDefaults(defaults);
+  }
 
   return (
     <div className="space-y-5">
@@ -741,7 +928,7 @@ function IssuesPage() {
         onChange={setFilters}
         view={view}
         onViewChange={setView}
-        onNew={() => setShowCreate(true)}
+        onNew={() => setCreateDefaults({})}
       />
 
       {loadError && (
@@ -751,9 +938,7 @@ function IssuesPage() {
       )}
 
       {loading ? (
-        <div className="flex justify-center py-20">
-          <Spinner size="lg" />
-        </div>
+        <div className="flex justify-center py-20"><Spinner size="lg" /></div>
       ) : view === "board" ? (
         <KanbanBoard issues={filteredIssues} onSelect={setSelectedIssue} />
       ) : (
@@ -773,9 +958,7 @@ function IssuesPage() {
             <tbody>
               {filteredIssues.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-12 text-center text-sm text-zinc-600">
-                    No issues found.
-                  </td>
+                  <td colSpan={7} className="px-3 py-12 text-center text-sm text-zinc-600">No issues found.</td>
                 </tr>
               ) : (
                 filteredIssues.map((issue) => (
@@ -792,12 +975,14 @@ function IssuesPage() {
           issue={selectedIssue}
           onClose={() => setSelectedIssue(null)}
           onRefresh={fetchIssues}
+          onAddChild={handleAddChild}
         />
       )}
 
-      {showCreate && (
+      {createDefaults !== null && (
         <CreateModal
-          onClose={() => setShowCreate(false)}
+          defaults={createDefaults}
+          onClose={() => setCreateDefaults(null)}
           onCreated={fetchIssues}
         />
       )}

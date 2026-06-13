@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { OnboardingTour } from "@/components/tour/OnboardingTour";
 
 export const metadata: Metadata = {
   title: "Meshwork Dashboard",
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
       <body className="bg-zinc-950 text-zinc-100 antialiased">
+        <OnboardingTour />
         {children}
       </body>
     </html>

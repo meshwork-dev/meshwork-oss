@@ -2,7 +2,7 @@
 // Extracted from runner.js.
 
 const db = require("../../db");
-const { DEFAULT_WORKING_DIR, N8N_CALLBACK_URL } = require("../config");
+const { config, DEFAULT_WORKING_DIR, N8N_CALLBACK_URL } = require("../config");
 const { checkBudget } = require("../metrics");
 const { admissionControl, requireSecret } = require("../middleware");
 const { products } = require("../products");
@@ -37,17 +37,66 @@ function registerPipelineRoutes(app) {
     const issueKey = body.issueKey;
     if (!issueKey) return res.status(400).json({ ok: false, error: "issueKey is required" });
 
-    const pipelineType = body.pipelineType || body.pipeline;
-    if (!pipelineType) return res.status(400).json({ ok: false, error: "pipelineType is required" });
+    const pipelineType = body.pipelineType || body.pipeline || null;
+    const inlinePhases = Array.isArray(body.phases) ? body.phases : null;
 
-    // Validate pipeline type exists
-    const definitions = loadPipelineDefinitions();
-    if (!definitions[pipelineType]) {
-      return res.status(400).json({
-        ok: false,
-        error: `Unknown pipeline type: ${pipelineType}`,
-        available: Object.keys(definitions),
-      });
+    if (!pipelineType && !inlinePhases) {
+      return res.status(400).json({ ok: false, error: "pipelineType or phases is required" });
+    }
+
+    if (inlinePhases) {
+      // Validate inline phases — condition strings are not accepted (they feed new Function())
+      if (inlinePhases.length === 0) {
+        return res.status(400).json({ ok: false, error: "phases must not be empty" });
+      }
+      if (inlinePhases.length > 20) {
+        return res.status(400).json({ ok: false, error: "phases must not exceed 20 entries" });
+      }
+      const VALID_GATE_TYPES = new Set(["comment-prefix", "quality-gate", "file-exists", "human-approval"]);
+      const agentToModel = config.routing?.agentToModel || {};
+      for (let i = 0; i < inlinePhases.length; i++) {
+        const p = inlinePhases[i];
+        if (!p || typeof p.name !== "string" || !p.name.trim()) {
+          return res.status(400).json({ ok: false, error: `phases[${i}].name is required` });
+        }
+        if (typeof p.agent !== "string" || !p.agent.trim()) {
+          return res.status(400).json({ ok: false, error: `phases[${i}].agent is required` });
+        }
+        if (!agentToModel[p.agent]) {
+          return res.status(400).json({ ok: false, error: `phases[${i}].agent "${p.agent}" is not a registered agent`, available: Object.keys(agentToModel) });
+        }
+        if (p.gate != null) {
+          if (!VALID_GATE_TYPES.has(p.gate.type)) {
+            return res.status(400).json({ ok: false, error: `phases[${i}].gate.type must be one of: ${[...VALID_GATE_TYPES].join(", ")}` });
+          }
+          if (p.gate.type === "comment-prefix" && typeof p.gate.prefix !== "string") {
+            return res.status(400).json({ ok: false, error: `phases[${i}].gate.prefix is required for comment-prefix gate` });
+          }
+          if (p.gate.type === "file-exists" && typeof p.gate.file !== "string") {
+            return res.status(400).json({ ok: false, error: `phases[${i}].gate.file is required for file-exists gate` });
+          }
+        }
+        if (p.maxRetries !== undefined && p.maxRetries !== null) {
+          if (!Number.isInteger(p.maxRetries) || p.maxRetries < 0 || p.maxRetries > 10) {
+            return res.status(400).json({ ok: false, error: `phases[${i}].maxRetries must be an integer 0–10` });
+          }
+        }
+        if (p.maxCostUsd !== undefined && p.maxCostUsd !== null) {
+          if (typeof p.maxCostUsd !== "number" || p.maxCostUsd <= 0) {
+            return res.status(400).json({ ok: false, error: `phases[${i}].maxCostUsd must be a positive number` });
+          }
+        }
+      }
+    } else {
+      // Validate named pipeline type exists in config
+      const definitions = loadPipelineDefinitions();
+      if (!definitions[pipelineType]) {
+        return res.status(400).json({
+          ok: false,
+          error: `Unknown pipeline type: ${pipelineType}`,
+          available: Object.keys(definitions),
+        });
+      }
     }
 
     let resolvedWorkingDir = DEFAULT_WORKING_DIR;
@@ -79,11 +128,14 @@ function registerPipelineRoutes(app) {
       callbackUrl: body.callbackUrl || N8N_CALLBACK_URL || null,
       slack: body.slack || null,
       telegram: body.telegram || null,
-      provider: body.provider || null, // Optional provider override (claude/zai)
+      provider: body.provider || null,
+      inlinePhases: inlinePhases || null,
+      description: body.description || null,
     };
 
+    const effectivePipelineType = pipelineType || "custom";
     try {
-      const pipeline = await createPipeline(issueKey, pipelineType, options);
+      const pipeline = await createPipeline(issueKey, effectivePipelineType, options);
       return res.status(202).json({
         ok: true,
         pipelineId: pipeline.pipelineId,
@@ -276,6 +328,62 @@ function registerPipelineRoutes(app) {
     db.pipelines.set(pipeline).catch(e => console.error('[db] pipeline update failed: ' + e.message));
 
     return res.json({ ok: true, completedPhase: phase.name, phaseIndex });
+  });
+
+  // POST /pipelines/:id/approve — approve the currently awaiting-approval phase
+  app.post("/pipelines/:id/approve", requireSecret, async (req, res) => {
+    const pipeline = await getPipeline(req.params.id);
+    if (!pipeline) return res.status(404).json({ ok: false, error: "pipeline not found" });
+
+    const phase = pipeline.phases.find(p => p.status === "awaiting-approval");
+    if (!phase) return res.status(400).json({ ok: false, error: "No phase awaiting approval" });
+
+    phase.humanApproval = { approved: true, reason: req.body?.reason || "Approved", approvedAt: nowIso() };
+    phase.status = "completed";
+    phase.gateResult = { passed: true, reason: phase.humanApproval.reason };
+    phase.completedAt = nowIso();
+
+    db.pipelines.set(pipeline).catch(e => console.error('[db] pipeline update failed: ' + e.message));
+    console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} phase ${phase.name} APPROVED`);
+
+    jobEmitter.emit("pipeline:gate-passed", {
+      pipelineId: pipeline.pipelineId,
+      phase: phase.name,
+      phaseIndex: phase.index,
+      reason: phase.humanApproval.reason,
+    });
+
+    setImmediate(() => advancePipeline(pipeline));
+    return res.json({ ok: true, pipelineId: pipeline.pipelineId, phase: phase.name });
+  });
+
+  // POST /pipelines/:id/reject — reject the currently awaiting-approval phase
+  app.post("/pipelines/:id/reject", requireSecret, async (req, res) => {
+    const pipeline = await getPipeline(req.params.id);
+    if (!pipeline) return res.status(404).json({ ok: false, error: "pipeline not found" });
+
+    const phase = pipeline.phases.find(p => p.status === "awaiting-approval");
+    if (!phase) return res.status(400).json({ ok: false, error: "No phase awaiting approval" });
+
+    phase.humanApproval = { approved: false, reason: req.body?.reason || "Rejected", rejectedAt: nowIso() };
+    phase.status = "failed";
+    phase.gateResult = { passed: false, reason: phase.humanApproval.reason };
+    phase.completedAt = nowIso();
+    pipeline.status = "failed";
+    pipeline.error = `Phase "${phase.name}" rejected: ${phase.humanApproval.reason}`;
+    pipeline.completedAt = nowIso();
+
+    db.pipelines.set(pipeline).catch(e => console.error('[db] pipeline update failed: ' + e.message));
+    console.log(`[${nowIso()}] Pipeline ${pipeline.pipelineId} phase ${phase.name} REJECTED`);
+
+    jobEmitter.emit("pipeline:gate-failed", {
+      pipelineId: pipeline.pipelineId,
+      phase: phase.name,
+      phaseIndex: phase.index,
+      reason: phase.humanApproval.reason,
+    });
+
+    return res.json({ ok: true, pipelineId: pipeline.pipelineId, phase: phase.name });
   });
 
   // GET /pipelines/:id - Get pipeline status

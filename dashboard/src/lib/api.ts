@@ -6,6 +6,8 @@ import type {
   Worktree, WorktreeListResponse, StreamEvent,
   ScheduledItem, SkillUsageMap,
   Issue, IssueSearchResult, IssueDetail, IssueTransition, Notification,
+  PipelineDefinition, PipelineDefinitionDetail, PipelineRoutingRule,
+  Product, IntegrationStatus,
 } from "./types";
 import { clearAuth } from "./auth";
 
@@ -268,6 +270,61 @@ export class RunnerAPI {
     return this.fetch(`/pipelines/${id}/restart`, { method: "POST" });
   }
 
+  async approvePipeline(id: string, reason?: string): Promise<void> {
+    await this.fetch(`/pipelines/${id}/approve`, { method: "POST", body: JSON.stringify({ reason }) });
+  }
+
+  async rejectPipeline(id: string, reason?: string): Promise<void> {
+    await this.fetch(`/pipelines/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+  }
+
+  async createPipeline(req: {
+    issueKey: string;
+    phases: { name: string; agent: string; gate?: { type: string; prefix?: string; file?: string } }[];
+    description?: string;
+    workingDir?: string;
+  }): Promise<{ pipelineId: string; statusUrl: string }> {
+    return this.fetch("/pipeline", { method: "POST", body: JSON.stringify(req) });
+  }
+
+  async listPipelineDefinitions(): Promise<PipelineDefinition[]> {
+    const res = await this.fetch<{ definitions: PipelineDefinition[] }>("/api/pipeline-definitions");
+    return res.definitions;
+  }
+
+  async getPipelineDefinition(name: string): Promise<PipelineDefinitionDetail> {
+    try {
+      const res = await this.fetch<{ definition: PipelineDefinitionDetail }>(`/api/pipeline-definitions/${encodeURIComponent(name)}`);
+      return res.definition;
+    } catch (err) {
+      if (err instanceof APIError && err.status === 404) {
+        return { name, phases: [] };
+      }
+      throw err;
+    }
+  }
+
+  async savePipelineDefinition(req: {
+    name: string;
+    description?: string;
+    phases: Array<{ name: string; agent: string; gate?: { type: string; prefix?: string; file?: string } }>;
+  }): Promise<void> {
+    await this.fetch("/api/pipeline-definitions", { method: "POST", body: JSON.stringify(req) });
+  }
+
+  async deletePipelineDefinition(name: string): Promise<void> {
+    await this.fetch(`/api/pipeline-definitions/${encodeURIComponent(name)}`, { method: "DELETE" });
+  }
+
+  async listPipelineRouting(): Promise<PipelineRoutingRule[]> {
+    const res = await this.fetch<{ rules: PipelineRoutingRule[] }>("/api/pipeline-routing");
+    return res.rules;
+  }
+
+  async savePipelineRouting(rules: PipelineRoutingRule[]): Promise<void> {
+    await this.fetch("/api/pipeline-routing", { method: "PUT", body: JSON.stringify({ rules }) });
+  }
+
   async getTimeline(issueKey: string): Promise<TimelineResponse> {
     return this.fetch<TimelineResponse>(`/api/timeline/${encodeURIComponent(issueKey)}`);
   }
@@ -325,7 +382,11 @@ export class RunnerAPI {
   }
 
   // Issues
-  async listIssues(params?: { status?: string; type?: string; project?: string; label?: string; assignee?: string; search?: string; limit?: number; offset?: number }): Promise<IssueSearchResult> {
+  async listProducts(): Promise<Product[]> {
+    return this.fetch<Product[]>("/api/products");
+  }
+
+  async listIssues(params?: { status?: string; type?: string; project?: string; label?: string; assignee?: string; search?: string; parentKey?: string; limit?: number; offset?: number }): Promise<IssueSearchResult> {
     const qs = new URLSearchParams();
     if (params?.status) qs.set("status", params.status);
     if (params?.type) qs.set("type", params.type);
@@ -333,6 +394,7 @@ export class RunnerAPI {
     if (params?.label) qs.set("label", params.label);
     if (params?.assignee) qs.set("assignee", params.assignee);
     if (params?.search) qs.set("search", params.search);
+    if (params?.parentKey) qs.set("parentKey", params.parentKey);
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.offset) qs.set("offset", String(params.offset));
     const query = qs.toString();
@@ -386,6 +448,34 @@ export class RunnerAPI {
 
   async markAllNotificationsRead(): Promise<void> {
     await this.fetch("/api/notifications/read-all", { method: "POST" });
+  }
+
+  // Integrations
+  async getIntegrations(): Promise<IntegrationStatus> {
+    const res = await this.fetch<{ ok: boolean; integrations: IntegrationStatus }>("/api/integrations");
+    return res.integrations;
+  }
+
+  async testIntegration(
+    name: string,
+    payload: Record<string, string>
+  ): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> {
+    // Use apiFetch (raw) so we can read the body even on non-2xx, but the
+    // server always returns 200 for test endpoints.
+    const res = await fetch(`${this.baseUrl}/api/integrations/${name}/test`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 401) { handleUnauthorized(); throw new APIError(401, "Session expired"); }
+    return res.json();
+  }
+
+  async saveIntegration(name: string, payload: Record<string, string>): Promise<void> {
+    await this.fetch(`/api/integrations/${name}/save`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 }
 
