@@ -19,6 +19,7 @@ function Overview({ baseUrl }: { baseUrl: string }) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [recentJobs, setRecentJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   function loadData() {
     const api = getAPI();
@@ -27,8 +28,12 @@ function Overview({ baseUrl }: { baseUrl: string }) {
       .then(([s, j]) => {
         setStats(s);
         setRecentJobs(j.jobs.slice(0, 10));
+        setError(null);
       })
-      .catch((err) => console.warn("[overview] Failed to load stats/jobs:", err))
+      .catch((err) => {
+        console.warn("[overview] Failed to load stats/jobs:", err);
+        setError(err instanceof Error ? err.message : "Failed to load stats");
+      })
       .finally(() => setLoading(false));
   }
 
@@ -59,6 +64,12 @@ function Overview({ baseUrl }: { baseUrl: string }) {
         </span>
       </div>
 
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-950/20 px-4 py-3 text-sm text-red-400">
+          Failed to load data from the runner: {error}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Running" value={health?.running ?? 0} />
         <StatCard label="Queued" value={health?.queued ?? 0} />
@@ -70,11 +81,15 @@ function Overview({ baseUrl }: { baseUrl: string }) {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Succeeded" value={stats?.recentSucceeded ?? 0} />
-        <StatCard label="Failed" value={stats?.recentFailed ?? 0} />
+        <StatCard label="Succeeded (1h)" value={stats?.recentSucceeded ?? 0} />
+        <StatCard label="Failed (1h)" value={stats?.recentFailed ?? 0} />
         <StatCard
-          label="Success Rate"
-          value={stats && stats.totalJobs > 0 ? `${Math.round((stats.recentSucceeded / stats.totalJobs) * 100)}%` : "N/A"}
+          label="Success Rate (1h)"
+          value={
+            stats && stats.recentSucceeded + stats.recentFailed > 0
+              ? `${Math.round((stats.recentSucceeded / (stats.recentSucceeded + stats.recentFailed)) * 100)}%`
+              : "N/A"
+          }
         />
         <StatCard
           label="Uptime"

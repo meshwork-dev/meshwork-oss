@@ -239,16 +239,38 @@ const tracker = {
 
       const jql = jqlParts.length > 0 ? jqlParts.join(" AND ") : `project IS NOT EMPTY`;
       const maxResults = query.limit || 50;
-      const startAt = query.offset || 0;
+      const fields = "summary,status,issuetype,priority,labels,assignee,parent,created,updated";
 
-      const res = await jiraGet(`/search?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}&startAt=${startAt}&fields=summary,status,issuetype,priority,labels,assignee,parent,created,updated`);
-      if (res.statusCode === 200 && res.json) {
-        return {
-          issues: (res.json.issues || []).map(mapJiraIssueToInternal),
-          total: res.json.total || 0,
-        };
+      // /rest/api/3/search was removed by Atlassian (410); /search/jql uses
+      // token-based pagination, so an offset is emulated by skipping rows.
+      let toSkip = query.offset || 0;
+      const issues = [];
+      let nextPageToken = null;
+      do {
+        const params = `jql=${encodeURIComponent(jql)}&maxResults=${Math.min(100, toSkip + maxResults - issues.length)}&fields=${fields}` +
+          (nextPageToken ? `&nextPageToken=${encodeURIComponent(nextPageToken)}` : "");
+        const res = await jiraGet(`/search/jql?${params}`);
+        if (res.statusCode !== 200 || !res.json) {
+          throw new Error(`Jira search failed (${res.statusCode}): ${res.body?.substring(0, 200)}`);
+        }
+        let batch = res.json.issues || [];
+        if (toSkip > 0) {
+          const skip = Math.min(toSkip, batch.length);
+          batch = batch.slice(skip);
+          toSkip -= skip;
+        }
+        issues.push(...batch.map(mapJiraIssueToInternal));
+        nextPageToken = res.json.nextPageToken || null;
+      } while (issues.length < maxResults && nextPageToken);
+
+      // /search/jql no longer reports a total; use the approximate count.
+      let total = (query.offset || 0) + issues.length;
+      const countRes = await jiraPost("/search/approximate-count", { jql });
+      if (countRes.statusCode === 200 && typeof countRes.json?.count === "number") {
+        total = countRes.json.count;
       }
-      throw new Error(`Jira search failed (${res.statusCode}): ${res.body?.substring(0, 200)}`);
+
+      return { issues: issues.slice(0, maxResults), total };
     }
 
     return db.issues.search(query);

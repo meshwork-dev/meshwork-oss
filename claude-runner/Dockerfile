@@ -27,6 +27,7 @@ COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
 COPY runner.js db.js issue-tracker.js migrate-state-to-postgres.js ./
+COPY lib ./lib
 COPY config.docker.json ./config.json
 COPY qwen-settings.docker.json /tmp/qwen-settings.json
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

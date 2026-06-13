@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { getAPI } from "@/lib/api";
-import type { TeamSession } from "@/lib/types";
+import type { Agent, TeamSession } from "@/lib/types";
 
 const STATUS_COLORS: Record<string, "green" | "red" | "yellow" | "blue" | "zinc"> = {
   succeeded: "green",
@@ -27,17 +27,23 @@ function formatDuration(ms: number | null | undefined): string {
 
 export function TeamActivity() {
   const [sessions, setSessions] = useState<TeamSession[]>([]);
+  const [teamLeads, setTeamLeads] = useState<Agent[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
-        const res = await getAPI()?.getTeamSessions();
+        const [res, agents] = await Promise.all([
+          getAPI()?.getTeamSessions(),
+          getAPI()?.listAgents().catch(() => []),
+        ]);
         if (res) {
           setSessions(res.sessions);
         }
-      } catch {
-        /* ignore */
+        setTeamLeads((agents || []).filter((a) => a.isTeamLead));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load team sessions");
       } finally {
         setLoading(false);
       }
@@ -49,6 +55,14 @@ export function TeamActivity() {
     return (
       <div className="flex justify-center py-12">
         <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-12 text-red-400 text-sm">
+        Failed to load team activity: {error}
       </div>
     );
   }
@@ -120,29 +134,24 @@ export function TeamActivity() {
         </div>
       )}
 
-      {/* Team Configuration */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider mb-4">
-          Team Configuration
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <TeamConfigCard
-            lead="engineer-planner"
-            model="Opus 4.6"
-            teammates={["engineer-implementer", "ui-engineer", "engineer-reviewer"]}
-          />
-          <TeamConfigCard
-            lead="product-manager"
-            model="Opus 4.6"
-            teammates={["pr-creator", "release-notes"]}
-          />
-          <TeamConfigCard
-            lead="sales-development"
-            model="Opus 4.6"
-            teammates={["sales-researcher", "sales-outreach"]}
-          />
+      {/* Team Configuration — from the runner's registered agents */}
+      {teamLeads.length > 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+          <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider mb-4">
+            Team Configuration
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {teamLeads.map((lead) => (
+              <TeamConfigCard
+                key={lead.name}
+                lead={lead.name}
+                model={lead.model || "default"}
+                teammates={lead.teammates || []}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Recent Team Sessions */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">

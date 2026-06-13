@@ -9,20 +9,6 @@ import type {
 } from "./types";
 import { clearAuth } from "./auth";
 
-// Team config known from runner config.json — enriches agents client-side
-const TEAM_CONFIG: Record<string, { teammates: string[]; disallowedTools?: string[] }> = {
-  "engineer-planner": {
-    teammates: ["engineer-implementer", "ui-engineer", "engineer-reviewer"],
-    disallowedTools: ["Edit", "Write", "Bash", "NotebookEdit"],
-  },
-  "product-manager": {
-    teammates: ["ba-agent"],
-  },
-  "sales-development": {
-    teammates: ["sales-researcher", "sales-outreach"],
-  },
-};
-
 // Map runner's jobId field to dashboard's id field
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapJob(raw: any): Job {
@@ -151,16 +137,7 @@ export class RunnerAPI {
   // Agents
   async listAgents(): Promise<Agent[]> {
     const res = await this.fetch<{ agents: Agent[] }>("/agents");
-    return res.agents.map((a) => {
-      // Server now provides team data; fall back to client-side config
-      const team = TEAM_CONFIG[a.name];
-      return {
-        ...a,
-        isTeamLead: a.isTeamLead ?? !!team,
-        teammates: a.teammates?.length ? a.teammates : team?.teammates,
-        disallowedTools: a.disallowedTools?.length ? a.disallowedTools : team?.disallowedTools,
-      };
-    });
+    return res.agents;
   }
 
   // Teams
@@ -225,12 +202,22 @@ export class RunnerAPI {
 
   // Conversations
   async listConversations(): Promise<Conversation[]> {
-    const res = await this.fetch<{ conversations: Conversation[] }>("/api/conversations");
-    return res.conversations;
+    // Runner items are keyed conversationId/updatedAt — map to the dashboard's shape
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await this.fetch<{ conversations: any[] }>("/api/conversations");
+    return (res.conversations || []).map((c) => ({
+      id: c.conversationId || c.id || "",
+      channelId: c.conversationId || c.channelId || "",
+      messageCount: c.messageCount ?? 0,
+      lastUpdated: c.updatedAt || c.lastUpdated || "",
+    }));
   }
 
-  getConversation(id: string): Promise<{ messages: unknown[] }> {
-    return this.fetch(`/api/conversations/${id}`);
+  async getConversation(id: string): Promise<{ messages: unknown[] }> {
+    // Runner wraps the payload: { ok, conversation: { conversationId, messages } }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await this.fetch<any>(`/api/conversations/${id}`);
+    return { messages: res.conversation?.messages || res.messages || [] };
   }
 
   // Tasks & Subtasks
@@ -333,7 +320,8 @@ export class RunnerAPI {
   // Skill usage telemetry
   async getSkillUsage(skill?: string): Promise<SkillUsageMap> {
     const qs = skill ? `?skill=${encodeURIComponent(skill)}` : "";
-    return this.fetch<SkillUsageMap>(`/api/skill-usage${qs}`);
+    const res = await this.fetch<{ ok: boolean; skillUsage: SkillUsageMap }>(`/api/skill-usage${qs}`);
+    return res.skillUsage || {};
   }
 
   // Issues

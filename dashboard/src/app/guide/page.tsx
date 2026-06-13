@@ -22,6 +22,25 @@ const TAB_LABELS: Record<Tab, string> = {
 /*  Section Components                                                 */
 /* ------------------------------------------------------------------ */
 
+// Static class map — Tailwind can't generate dynamically-built class names
+const DOT_COLORS: Record<string, string> = {
+  teal: "bg-teal-400",
+  emerald: "bg-emerald-400",
+  blue: "bg-blue-400",
+  amber: "bg-amber-400",
+  purple: "bg-purple-400",
+  rose: "bg-rose-400",
+};
+
+const TEXT_COLORS: Record<string, string> = {
+  teal: "text-teal-400",
+  emerald: "text-emerald-400",
+  blue: "text-blue-400",
+  amber: "text-amber-400",
+  purple: "text-purple-400",
+  rose: "text-rose-400",
+};
+
 function QuickStartSection() {
   return (
     <div className="space-y-5">
@@ -53,7 +72,7 @@ function QuickStartSection() {
             { title: "Ask about the codebase", desc: "Dashboard → Agents → ask-dave-agent → ask your question.", color: "rose" },
           ].map((item) => (
             <div key={item.title} className="flex gap-3 items-start">
-              <span className={`mt-1 w-2 h-2 rounded-full bg-${item.color}-400 shrink-0`} />
+              <span className={`mt-1 w-2 h-2 rounded-full ${DOT_COLORS[item.color] || "bg-zinc-400"} shrink-0`} />
               <div>
                 <p className="text-sm font-medium text-white">{item.title}</p>
                 <p className="text-xs text-zinc-400 mt-0.5">{item.desc}</p>
@@ -240,7 +259,7 @@ function PipelinesSection() {
           ].map((p) => (
             <div key={p.name} className="rounded-lg bg-zinc-950 border border-zinc-800 p-4">
               <div className="flex items-center gap-2 mb-1">
-                <code className={`text-${p.color}-400 font-bold text-sm`}>{p.name}</code>
+                <code className={`${TEXT_COLORS[p.color] || "text-zinc-300"} font-bold text-sm`}>{p.name}</code>
                 <span className="text-xs text-zinc-500">({p.phases.length} phases)</span>
               </div>
               <p className="text-xs text-zinc-400 mb-3">{p.trigger}</p>

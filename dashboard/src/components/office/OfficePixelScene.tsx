@@ -88,7 +88,7 @@ function useOfficeData(baseUrl: string, productId: string | null) {
         const [aRes, mRes, jRes] = await Promise.all([
           fetch(agentsUrl),
           fetch(`${baseUrl}/api/meetings`),
-          fetch(`${baseUrl}/jobs?limit=50&status=running`),
+          fetch(`${baseUrl}/api/jobs?limit=50&status=running`),
         ]);
         if (cancelled) return;
         if (aRes.ok) { const j = await aRes.json(); setAgents(j.agents ?? []); }

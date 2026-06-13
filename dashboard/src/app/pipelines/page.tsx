@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AuthGate } from "@/components/layout/AuthGate";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
@@ -210,14 +210,15 @@ function PipelineTimeline({ issueKey }: { issueKey: string }) {
   const [timeline, setTimeline] = useState<TimelineEntry[] | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useState(() => {
+  useEffect(() => {
     const api = getAPI();
     if (!api) { setLoading(false); return; }
+    setLoading(true);
     api.getTimeline(issueKey)
       .then(res => setTimeline(res.entries))
       .catch(() => setTimeline([]))
       .finally(() => setLoading(false));
-  });
+  }, [issueKey]);
 
   if (loading) {
     return <div className="flex justify-center py-6"><Spinner size="sm" /></div>;
@@ -245,14 +246,16 @@ function PipelineDetail({ pipeline: summary, onBack }: { pipeline: Pipeline; onB
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  useState(() => {
+  useEffect(() => {
     const api = getAPI();
     if (!api) { setLoading(false); return; }
+    setLoading(true);
     api.getPipeline(summary.id)
       .then(full => setPipeline(full))
       .catch(() => setPipeline(summary))
       .finally(() => setLoading(false));
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary.id]);
 
   const p = pipeline || summary;
   const phases = p.phases || [];

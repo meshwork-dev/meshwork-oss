@@ -500,6 +500,7 @@ function MessageThread({
 function ChatPage({ baseUrl }: { baseUrl: string }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [convsLoading, setConvsLoading] = useState(true);
+  const [convsError, setConvsError] = useState<string | null>(null);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -514,7 +515,7 @@ function ChatPage({ baseUrl }: { baseUrl: string }) {
     api
       .listConversations()
       .then(setConversations)
-      .catch(() => {})
+      .catch((e) => setConvsError(e instanceof Error ? e.message : "Failed to load conversations"))
       .finally(() => setConvsLoading(false));
   }, []);
 
@@ -756,6 +757,11 @@ function ChatPage({ baseUrl }: { baseUrl: string }) {
           <h2 className="text-sm font-semibold text-zinc-300">Chat</h2>
         </div>
         <div className="flex-1 overflow-hidden">
+          {convsError && (
+            <p className="px-3 py-2 text-xs text-red-400 border-b border-zinc-800">
+              Failed to load conversations: {convsError}
+            </p>
+          )}
           <ConversationList
             conversations={conversations}
             activeId={activeChannelId}

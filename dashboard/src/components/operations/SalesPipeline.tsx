@@ -51,13 +51,6 @@ const STATUS_COLORS: Record<string, "green" | "red" | "yellow" | "blue" | "zinc"
   "quality-gate-retry": "yellow",
 };
 
-const SCHEDULE = [
-  { day: "Monday", time: "10:00 AM", task: "Prospecting", workflow: "Sales_Prospecting_Schedule" },
-  { day: "Wednesday", time: "10:00 AM", task: "Enrichment", workflow: "Sales_Enrichment_Schedule" },
-  { day: "Thursday", time: "10:00 AM", task: "Outreach Drafting", workflow: "Sales_Outreach_Schedule" },
-  { day: "Friday", time: "4:00 PM", task: "Pipeline Report", workflow: "Sales_Pipeline_Report" },
-];
-
 export function SalesPipeline() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
@@ -133,19 +126,6 @@ export function SalesPipeline() {
               </div>
             );
           })}
-        </div>
-      </div>
-
-      {/* Weekly Schedule */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider mb-4">Weekly Schedule</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {SCHEDULE.map((s) => (
-            <div key={s.workflow} className="bg-zinc-800/50 rounded-lg p-3">
-              <p className="text-xs text-zinc-500">{s.day} {s.time}</p>
-              <p className="text-sm font-medium text-white mt-1">{s.task}</p>
-            </div>
-          ))}
         </div>
       </div>
 

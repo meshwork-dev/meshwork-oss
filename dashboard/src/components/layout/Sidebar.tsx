@@ -12,7 +12,6 @@ const nav = [
   { href: "/worktrees", label: "Worktrees", icon: "W" },
   { href: "/agents", label: "Agents", icon: "A" },
   { href: "/office", label: "Office", icon: "3" },
-  { href: "/house", label: "The Loop", icon: "▶" },
   { href: "/metrics", label: "Metrics", icon: "M" },
   { href: "/batches", label: "Batches", icon: "B" },
   { href: "/conversations", label: "Conversations", icon: "C" },
@@ -24,7 +23,7 @@ const nav = [
 
 const mobileNav = [
   { href: "/", label: "Home", icon: "H" },
-  { href: "/house", label: "The Loop", icon: "▶" },
+  { href: "/issues", label: "Issues", icon: "I" },
   { href: "/chat", label: "Chat", icon: "T" },
   { href: "/jobs", label: "Jobs", icon: "J" },
   { href: "/pipelines", label: "Pipe", icon: "P" },

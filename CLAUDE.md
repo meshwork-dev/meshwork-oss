@@ -22,8 +22,18 @@ External Triggers (Issue tracker / chat / N8N schedules)
 ```
 
 **Core components:**
-- `claude-runner/runner.js` — Express server. Job queue, Claude CLI
-  subprocess management, conversation memory, retry logic, metrics.
+- `claude-runner/runner.js` — composition root: loads config, wires the
+  modules below, mounts routes, starts background timers and the HTTP
+  server (port 3210).
+- `claude-runner/lib/` — runner subsystems, one module each: `config`
+  (env/config loading + derived constants), `state` (shared in-memory
+  maps + SSE job emitter), `worker` (job queue/execution loop),
+  `claude-exec` (Claude CLI subprocess), `pipelines`, `meetings`,
+  `worktrees`, `scheduler`, `sprint`, `jira`, `callbacks`, `metrics`,
+  `oauth`, `prompts`, `local-llm`, `quality-gate`, `verification`,
+  `products`, `conversations`, and friends. HTTP endpoints live in
+  `lib/routes/*.js` grouped by domain, each exporting a
+  `register*Routes(app)` function called from runner.js.
 - `claude-runner/db.js` — PostgreSQL persistence layer (jobs, pipelines,
   meetings, conversations, idempotency cache).
 - `dashboard/` — Next.js UI (port 3100) for monitoring runs, dispatching

@@ -34,7 +34,7 @@ export function SystemHealth({ health, digest }: { health: HealthResponse | null
           { label: "Running", value: String(health?.running ?? 0) },
           { label: "Queued", value: String(health?.queued ?? 0) },
           { label: "Total Jobs", value: String(health?.jobs ?? 0) },
-          { label: "Max Concurrency", value: String(health?.maxConcurrency ?? 0) },
+          { label: "Max Concurrency / Product", value: String(health?.maxConcurrencyPerProduct ?? 0) },
           { label: "Uptime", value: uptime },
         ]}
       />

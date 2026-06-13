@@ -694,6 +694,7 @@ function FilterBar({
 function IssuesPage() {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [filters, setFilters] = useState<Filters>({ search: "", type: "", priority: "", status: "" });
   const [view, setView] = useState<"board" | "list">("board");
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
@@ -710,8 +711,10 @@ function IssuesPage() {
       if (filters.search) params.search = filters.search;
       const res = await api.listIssues(params);
       setIssues(res.issues ?? []);
-    } catch {
+      setLoadError("");
+    } catch (err) {
       setIssues([]);
+      setLoadError(err instanceof Error ? err.message : "Failed to load issues.");
     } finally {
       setLoading(false);
     }
@@ -740,6 +743,12 @@ function IssuesPage() {
         onViewChange={setView}
         onNew={() => setShowCreate(true)}
       />
+
+      {loadError && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3">
+          Failed to load issues: {loadError}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-20">

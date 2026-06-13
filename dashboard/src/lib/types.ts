@@ -4,7 +4,7 @@ export interface HealthResponse {
   running: number;
   queued: number;
   jobs: number;
-  maxConcurrency: number;
+  maxConcurrencyPerProduct: number;
   uptime?: number;
   n8n?: {
     reachable: boolean;

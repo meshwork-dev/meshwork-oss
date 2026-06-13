@@ -15,6 +15,7 @@ function MetricsPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const api = getAPI();
@@ -24,12 +25,21 @@ function MetricsPage() {
         setMetrics(m);
         setStats(s);
       })
-      .catch(() => {})
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load metrics"))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) {
     return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-20">
+        <p className="text-red-400 text-sm">Failed to load metrics: {error}</p>
+        <p className="text-zinc-500 text-xs mt-2">Is the runner reachable?</p>
+      </div>
+    );
   }
 
   // Build agent table data from byAgent map
