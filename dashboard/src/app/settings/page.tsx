@@ -476,6 +476,19 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
   const [testResult, setTestResult] = useState<{ ok: boolean; latencyMs?: number; response?: string; error?: string } | null>(null);
   const [keyMsg, setKeyMsg] = useState<string | null>(null);
 
+  // Edit state
+  const [editing, setEditing] = useState(false);
+  const [editDisplayName, setEditDisplayName] = useState(provider.displayName ?? "");
+  const [editType, setEditType] = useState(provider.type);
+  const [editBaseUrl, setEditBaseUrl] = useState(provider.baseUrl ?? "");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editMsg, setEditMsg] = useState<string | null>(null);
+
+  // Delete state
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteMsg, setDeleteMsg] = useState<string | null>(null);
+
   async function handleSaveKey() {
     if (!keyInput.trim()) return;
     setSavingKey(true);
@@ -505,6 +518,39 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
     }
   }
 
+  async function handleSaveEdit() {
+    setSavingEdit(true);
+    setEditMsg(null);
+    try {
+      await getAPI().upsertProvider({
+        id: provider.id,
+        type: editType,
+        displayName: editDisplayName || undefined,
+        baseUrl: editBaseUrl || undefined,
+      });
+      setEditing(false);
+      setEditMsg(null);
+      onRefresh();
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Failed to save");
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    setDeleteMsg(null);
+    try {
+      await getAPI().deleteProvider(provider.id);
+      onRefresh();
+    } catch (e) {
+      setDeleteMsg(e instanceof Error ? e.message : "Failed to delete");
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  }
+
   const modelMapping = provider.modelMapping;
 
   return (
@@ -518,20 +564,110 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
               <span className="px-1.5 py-0.5 rounded text-[10px] text-zinc-500 bg-zinc-800">config.json</span>
             )}
           </div>
-          {provider.baseUrl && (
+          {provider.baseUrl && !editing && (
             <p className="text-xs text-zinc-500 mt-0.5 truncate max-w-xs">{provider.baseUrl}</p>
           )}
         </div>
-        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold flex-shrink-0 ${
-          provider.apiKeySet
-            ? "bg-emerald-500/10 text-emerald-400"
-            : "bg-zinc-800 text-zinc-500"
-        }`}>
-          {provider.apiKeySet ? "Key set" : "No key"}
-        </span>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+            provider.apiKeySet
+              ? "bg-emerald-500/10 text-emerald-400"
+              : "bg-zinc-800 text-zinc-500"
+          }`}>
+            {provider.apiKeySet ? "Key set" : "No key"}
+          </span>
+          <button
+            onClick={() => { setEditing((e) => !e); setEditMsg(null); setConfirmDelete(false); }}
+            className="px-2 py-1 text-[11px] text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 rounded-md transition-colors"
+          >
+            {editing ? "Cancel" : "Edit"}
+          </button>
+          {!confirmDelete ? (
+            <button
+              onClick={() => { setConfirmDelete(true); setEditing(false); }}
+              className="px-2 py-1 text-[11px] text-zinc-400 hover:text-red-400 border border-zinc-700 hover:border-red-800 rounded-md transition-colors"
+            >
+              Delete
+            </button>
+          ) : (
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="px-2 py-1 text-[11px] text-red-400 border border-red-800 rounded-md hover:bg-red-900/30 transition-colors disabled:opacity-50"
+            >
+              {deleting ? "Deleting…" : "Confirm"}
+            </button>
+          )}
+        </div>
       </div>
 
-      {modelMapping && (
+      {confirmDelete && (
+        <div className="flex items-center justify-between bg-red-950/30 border border-red-900/50 rounded-lg px-3 py-2">
+          <p className="text-xs text-red-300">
+            {provider.source === "config"
+              ? "This removes the DB override — the provider will still appear from config.json."
+              : "This will permanently delete the provider and its stored API key."}
+          </p>
+          <button
+            onClick={() => setConfirmDelete(false)}
+            className="text-xs text-zinc-500 hover:text-white ml-3 flex-shrink-0"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {deleteMsg && <p className="text-xs text-red-400">{deleteMsg}</p>}
+
+      {editing && (
+        <div className="space-y-3 border-t border-zinc-800 pt-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-zinc-400 mb-1 block">Display name</label>
+              <input
+                value={editDisplayName}
+                onChange={(e) => setEditDisplayName(e.target.value)}
+                placeholder={provider.id}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-zinc-400 mb-1 block">Type</label>
+              <select
+                value={editType}
+                onChange={(e) => setEditType(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500"
+              >
+                <option value="claude-cli">Claude CLI</option>
+                <option value="openai">OpenAI</option>
+                <option value="gemini">Gemini</option>
+                <option value="anthropic-direct">Anthropic API (direct)</option>
+                <option value="github">GitHub</option>
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="text-xs text-zinc-400 mb-1 block">Base URL (optional)</label>
+              <input
+                value={editBaseUrl}
+                onChange={(e) => setEditBaseUrl(e.target.value)}
+                placeholder="https://api.openai.com"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500"
+              />
+            </div>
+          </div>
+          {editMsg && <p className="text-xs text-red-400">{editMsg}</p>}
+          <div className="flex justify-end">
+            <button
+              onClick={handleSaveEdit}
+              disabled={savingEdit}
+              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs rounded-lg font-medium transition-colors"
+            >
+              {savingEdit ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {modelMapping && !editing && (
         <div className="grid grid-cols-3 gap-2 text-xs">
           {(["opus", "sonnet", "haiku"] as const).map((tier) =>
             modelMapping[tier] ? (
