@@ -33,8 +33,6 @@ function resolveProviderModel(providerConfig, tier) {
   return m[tier] || m.default || Object.values(m).find(Boolean) || tier || "default";
 }
 
-module.exports.resolveProviderModel = resolveProviderModel;
-
 // Function declarations are hoisted: exporting before requiring sibling
 // modules keeps require cycles safe (each module's exports are complete
 // before any sibling starts loading).
@@ -45,6 +43,7 @@ module.exports = {
   runConsultation,
   runClaude,
   extractUsageFromOutput,
+  resolveProviderModel,
 };
 
 const { buildAgentPrompt, buildChatPrompt, buildDeliveryPrompt } = require("./prompts");
