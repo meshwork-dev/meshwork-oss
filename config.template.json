@@ -35,10 +35,13 @@
   },
   "providers": {
     "claude": {
+      "type": "claude-cli",
+      "authMode": "auto",
       "baseUrl": null,
       "authTokenEnvVar": "ANTHROPIC_API_KEY"
     },
     "zai": {
+      "type": "claude-cli",
       "baseUrl": "https://api.z.ai/api/anthropic",
       "authTokenEnvVar": "ZAI_API_KEY",
       "timeoutMs": 3000000,
@@ -47,6 +50,27 @@
         "sonnet": "GLM-5.1",
         "haiku": "GLM-5.1"
       }
+    }
+  },
+  "_providers_examples_commented_out": {
+    "openai": {
+      "type": "openai",
+      "authTokenEnvVar": "OPENAI_API_KEY",
+      "modelMapping": { "opus": "gpt-4o", "sonnet": "gpt-4o-mini", "haiku": "gpt-4o-mini" }
+    },
+    "gemini": {
+      "type": "gemini",
+      "authTokenEnvVar": "GOOGLE_API_KEY",
+      "modelMapping": { "opus": "gemini-2.0-flash", "sonnet": "gemini-2.0-flash", "haiku": "gemini-2.0-flash-lite" }
+    },
+    "anthropic-direct": {
+      "type": "anthropic-direct",
+      "authTokenEnvVar": "ANTHROPIC_API_KEY",
+      "modelMapping": { "opus": "claude-opus-4-8", "sonnet": "claude-sonnet-4-6", "haiku": "claude-haiku-4-5-20251001" }
+    },
+    "github": {
+      "type": "github",
+      "authTokenEnvVar": "GITHUB_TOKEN"
     }
   },
   "claude": {

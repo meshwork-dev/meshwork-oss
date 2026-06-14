@@ -575,6 +575,29 @@ export interface IntegrationStatus {
   slack: { enabled: boolean; webhookUrl?: string };
 }
 
+export interface LLMProvider {
+  id: string;
+  type: "claude-cli" | "openai" | "gemini" | "anthropic-direct" | "github" | string;
+  displayName?: string;
+  baseUrl?: string | null;
+  authMode?: string;
+  authTokenEnvVar?: string;
+  modelMapping?: { opus?: string; sonnet?: string; haiku?: string; default?: string };
+  timeoutMs?: number | null;
+  enabled?: boolean;
+  apiKeySet?: boolean;
+  source?: "config" | "db";
+}
+
+export interface AgentRoutingEntry {
+  agentName: string;
+  providerId?: string | null;
+  modelTier?: string | null;
+  effort?: string | null;
+  toolRestrictions?: Record<string, unknown> | null;
+  source?: "config" | "db";
+}
+
 // Notification types
 export interface Notification {
   id: number;

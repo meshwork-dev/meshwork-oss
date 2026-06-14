@@ -8,6 +8,7 @@ import type {
   Issue, IssueSearchResult, IssueDetail, IssueTransition, Notification,
   PipelineDefinition, PipelineDefinitionDetail, PipelineRoutingRule,
   Product, IntegrationStatus, OnboardProductInput,
+  LLMProvider, AgentRoutingEntry,
 } from "./types";
 import { clearAuth } from "./auth";
 
@@ -488,6 +489,43 @@ export class RunnerAPI {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  }
+
+  // ── LLM Providers (BYOK) ────────────────────────────────────────────────
+
+  async getProviders(): Promise<LLMProvider[]> {
+    return this.fetch<LLMProvider[]>("/api/providers");
+  }
+
+  async upsertProvider(data: Partial<LLMProvider> & { id: string }): Promise<void> {
+    const existing = await this.getProviders().then((ps) => ps.find((p) => p.id === data.id)).catch(() => null);
+    if (existing) {
+      await this.fetch(`/api/providers/${data.id}`, { method: "PUT", body: JSON.stringify(data) });
+    } else {
+      await this.fetch("/api/providers", { method: "POST", body: JSON.stringify(data) });
+    }
+  }
+
+  async deleteProvider(id: string): Promise<void> {
+    await this.fetch(`/api/providers/${id}`, { method: "DELETE" });
+  }
+
+  async setProviderKey(id: string, key: string): Promise<void> {
+    await this.fetch(`/api/providers/${id}/key`, { method: "POST", body: JSON.stringify({ key }) });
+  }
+
+  async testProvider(id: string): Promise<{ ok: boolean; latencyMs?: number; response?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/providers/${id}/test`, { method: "POST" });
+    if (res.status === 401) { handleUnauthorized(); throw new APIError(401, "Session expired"); }
+    return res.json();
+  }
+
+  async getAgentRouting(): Promise<AgentRoutingEntry[]> {
+    return this.fetch<AgentRoutingEntry[]>("/api/routing/agents");
+  }
+
+  async setAgentRouting(agentName: string, routing: Partial<AgentRoutingEntry>): Promise<void> {
+    await this.fetch(`/api/routing/agents/${agentName}`, { method: "PUT", body: JSON.stringify(routing) });
   }
 }
 

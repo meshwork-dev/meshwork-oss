@@ -6,7 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { Spinner } from "@/components/ui/Spinner";
 import { getAPI } from "@/lib/api";
-import type { IntegrationStatus } from "@/lib/types";
+import type { IntegrationStatus, LLMProvider } from "@/lib/types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -440,6 +440,265 @@ function SlackCard({ status, onSaved }: SlackCardProps) {
   );
 }
 
+// ─── LLM Providers Section ────────────────────────────────────────────────────
+
+const PROVIDER_TYPE_LABELS: Record<string, string> = {
+  "claude-cli": "Claude CLI",
+  "openai": "OpenAI",
+  "gemini": "Gemini",
+  "anthropic-direct": "Anthropic API",
+  "github": "GitHub",
+};
+
+const PROVIDER_TYPE_COLORS: Record<string, string> = {
+  "claude-cli": "text-orange-400 bg-orange-500/10",
+  "openai": "text-green-400 bg-green-500/10",
+  "gemini": "text-blue-400 bg-blue-500/10",
+  "anthropic-direct": "text-purple-400 bg-purple-500/10",
+  "github": "text-zinc-300 bg-zinc-700/50",
+};
+
+function ProviderTypeBadge({ type }: { type: string }) {
+  const label = PROVIDER_TYPE_LABELS[type] || type;
+  const color = PROVIDER_TYPE_COLORS[type] || "text-zinc-400 bg-zinc-700/30";
+  return <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${color}`}>{label}</span>;
+}
+
+interface ProviderCardProps {
+  provider: LLMProvider;
+  onRefresh: () => void;
+}
+
+function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
+  const [keyInput, setKeyInput] = useState("");
+  const [savingKey, setSavingKey] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; latencyMs?: number; response?: string; error?: string } | null>(null);
+  const [keyMsg, setKeyMsg] = useState<string | null>(null);
+
+  async function handleSaveKey() {
+    if (!keyInput.trim()) return;
+    setSavingKey(true);
+    setKeyMsg(null);
+    try {
+      await getAPI().setProviderKey(provider.id, keyInput.trim());
+      setKeyInput("");
+      setKeyMsg("API key saved");
+      onRefresh();
+    } catch (e) {
+      setKeyMsg(e instanceof Error ? e.message : "Failed to save key");
+    } finally {
+      setSavingKey(false);
+    }
+  }
+
+  async function handleTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await getAPI().testProvider(provider.id);
+      setTestResult(result);
+    } catch (e) {
+      setTestResult({ ok: false, error: e instanceof Error ? e.message : "Test failed" });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const modelMapping = provider.modelMapping;
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h4 className="text-sm font-semibold text-white">{provider.displayName || provider.id}</h4>
+            <ProviderTypeBadge type={provider.type} />
+            {provider.source === "config" && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] text-zinc-500 bg-zinc-800">config.json</span>
+            )}
+          </div>
+          {provider.baseUrl && (
+            <p className="text-xs text-zinc-500 mt-0.5 truncate max-w-xs">{provider.baseUrl}</p>
+          )}
+        </div>
+        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold flex-shrink-0 ${
+          provider.apiKeySet
+            ? "bg-emerald-500/10 text-emerald-400"
+            : "bg-zinc-800 text-zinc-500"
+        }`}>
+          {provider.apiKeySet ? "Key set" : "No key"}
+        </span>
+      </div>
+
+      {modelMapping && (
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          {(["opus", "sonnet", "haiku"] as const).map((tier) =>
+            modelMapping[tier] ? (
+              <div key={tier} className="bg-zinc-800 rounded px-2 py-1">
+                <span className="text-zinc-500 capitalize">{tier}: </span>
+                <span className="text-zinc-300 font-mono truncate block">{modelMapping[tier]}</span>
+              </div>
+            ) : null
+          )}
+        </div>
+      )}
+
+      {provider.type !== "claude-cli" && (
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <input
+              type="password"
+              placeholder={provider.apiKeySet ? "Replace API key…" : "Enter API key…"}
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+              className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+            />
+            <button
+              onClick={handleSaveKey}
+              disabled={savingKey || !keyInput.trim()}
+              className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 text-white text-xs rounded-lg font-medium transition-colors"
+            >
+              {savingKey ? "Saving…" : "Save"}
+            </button>
+          </div>
+          {keyMsg && (
+            <p className={`text-xs ${keyMsg.startsWith("API key") ? "text-emerald-400" : "text-red-400"}`}>{keyMsg}</p>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <button
+          onClick={handleTest}
+          disabled={testing}
+          className="px-3 py-1.5 border border-zinc-700 hover:border-zinc-500 text-zinc-300 hover:text-white text-xs rounded-lg font-medium transition-colors disabled:opacity-40"
+        >
+          {testing ? "Testing…" : "Test connection"}
+        </button>
+        {testResult && (
+          <span className={`text-xs ${testResult.ok ? "text-emerald-400" : "text-red-400"}`}>
+            {testResult.ok
+              ? `OK${testResult.latencyMs ? ` (${testResult.latencyMs}ms)` : ""}`
+              : testResult.error || "Failed"}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AddProviderForm({ onAdded }: { onAdded: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [id, setId] = useState("");
+  const [type, setType] = useState("openai");
+  const [displayName, setDisplayName] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleAdd() {
+    if (!id.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await getAPI().upsertProvider({ id: id.trim(), type, displayName: displayName || undefined, baseUrl: baseUrl || undefined });
+      setOpen(false);
+      setId(""); setType("openai"); setDisplayName(""); setBaseUrl("");
+      onAdded();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to add provider");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="w-full border-2 border-dashed border-zinc-700 hover:border-zinc-500 rounded-xl py-6 text-zinc-500 hover:text-zinc-300 text-sm transition-colors"
+      >
+        + Add provider
+      </button>
+    );
+  }
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-3">
+      <h4 className="text-sm font-semibold text-white">Add LLM Provider</h4>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Provider ID</label>
+          <input value={id} onChange={(e) => setId(e.target.value)} placeholder="e.g. openai"
+            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500" />
+        </div>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Type</label>
+          <select value={type} onChange={(e) => setType(e.target.value)}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500">
+            <option value="claude-cli">Claude CLI</option>
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini</option>
+            <option value="anthropic-direct">Anthropic API (direct)</option>
+            <option value="github">GitHub</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Display name (optional)</label>
+          <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="e.g. GPT-4o"
+            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500" />
+        </div>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Base URL (optional)</label>
+          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com"
+            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500" />
+        </div>
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      <div className="flex gap-2 justify-end">
+        <button onClick={() => setOpen(false)} className="px-3 py-1.5 text-xs text-zinc-400 hover:text-white transition-colors">Cancel</button>
+        <button onClick={handleAdd} disabled={saving || !id.trim()}
+          className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs rounded-lg font-medium transition-colors">
+          {saving ? "Adding…" : "Add provider"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProvidersSection() {
+  const [providers, setProviders] = useState<LLMProvider[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    getAPI().getProviders()
+      .then(setProviders)
+      .catch(() => setProviders([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <section>
+      <h3 className="text-base font-semibold text-zinc-200 mb-1">LLM Providers</h3>
+      <p className="text-xs text-zinc-500 mb-4">Configure API keys and model mappings for each provider. Keys are stored encrypted.</p>
+      {loading ? (
+        <div className="flex justify-center py-6"><Spinner size="sm" /></div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {providers.map((p) => (
+            <ProviderCard key={p.id} provider={p} onRefresh={load} />
+          ))}
+          <AddProviderForm onAdded={load} />
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 function SettingsPage() {
@@ -489,6 +748,8 @@ function SettingsPage() {
           <SlackCard status={integrations?.slack ?? null} onSaved={load} />
         </div>
       </section>
+
+      <ProvidersSection />
     </div>
   );
 }

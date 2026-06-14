@@ -27,6 +27,18 @@ const { getTotalRunningCount, jobs, jobEmitter, pipelines, queue, runningByProdu
 const { nowIso, postJson } = require("../util");
 const { RUNNER_ROOT } = require("../config");
 const { createJob, enqueue } = require("../worker");
+const {
+  getProviders,
+  getProvider,
+  upsertProvider,
+  deleteProvider,
+  setProviderApiKey,
+  hasProviderApiKey,
+  resolveApiKey,
+  listAgentRouting,
+  upsertAgentRouting,
+  deleteAgentRouting,
+} = require("../provider-store");
 
 
 function registerAdminRoutes(app) {
@@ -1119,6 +1131,230 @@ function registerAdminRoutes(app) {
 
     try {
       savePipelineRoutingRules(rules);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // PROVIDER CONFIG ENDPOINTS (BYOK multi-provider)
+  // ---------------------------------------------------------------------------
+
+  app.get("/api/providers", requireSecret, async (_req, res) => {
+    try {
+      const dbProviders = await getProviders();
+      // Merge with file-based config so static providers are always visible
+      const fileProviders = config.providers || {};
+      const merged = new Map();
+      for (const [id, p] of Object.entries(fileProviders)) {
+        merged.set(id, { id, ...p, source: "config" });
+      }
+      for (const p of dbProviders) {
+        merged.set(p.id, { ...p, source: "db" });
+      }
+      // Attach apiKeySet flag; never expose the key value
+      const list = await Promise.all([...merged.values()].map(async (p) => {
+        const apiKeySet = await hasProviderApiKey(p.id);
+        const envFallback = p.authTokenEnvVar ? Boolean(process.env[p.authTokenEnvVar]) : false;
+        return { ...p, apiKeySet: apiKeySet || envFallback };
+      }));
+      res.json(list);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.post("/api/providers", requireSecret, async (req, res) => {
+    const { id, type, displayName, baseUrl, authMode, modelMapping, timeoutMs, enabled } = req.body || {};
+    if (!id || !type) return res.status(400).json({ ok: false, error: "id and type are required" });
+    const validTypes = ["claude-cli", "openai", "gemini", "anthropic-direct", "github"];
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({ ok: false, error: `type must be one of: ${validTypes.join(", ")}` });
+    }
+    try {
+      await upsertProvider({ id, type, displayName, baseUrl, authMode, modelMapping, timeoutMs, enabled });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.put("/api/providers/:id", requireSecret, async (req, res) => {
+    const { id } = req.params;
+    const { type, displayName, baseUrl, authMode, modelMapping, timeoutMs, enabled } = req.body || {};
+    try {
+      const existing = await getProvider(id);
+      if (!existing) return res.status(404).json({ ok: false, error: "Provider not found" });
+      await upsertProvider({ id, type: type || existing.type, displayName, baseUrl, authMode, modelMapping, timeoutMs, enabled });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.delete("/api/providers/:id", requireSecret, async (req, res) => {
+    const { id } = req.params;
+    if (id === "claude") return res.status(400).json({ ok: false, error: "Cannot delete the built-in claude provider" });
+    try {
+      await deleteProvider(id);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // Write-only key endpoint — accepts the key, stores it encrypted, never returns the value
+  app.post("/api/providers/:id/key", requireSecret, async (req, res) => {
+    const { id } = req.params;
+    const { key } = req.body || {};
+    if (!key || typeof key !== "string" || !key.trim()) {
+      return res.status(400).json({ ok: false, error: "key is required" });
+    }
+    try {
+      await setProviderApiKey(id, key.trim());
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.get("/api/providers/:id/key/status", requireSecret, async (req, res) => {
+    const { id } = req.params;
+    try {
+      const set = await hasProviderApiKey(id);
+      const providerConfig = await getProvider(id) || (config.providers || {})[id];
+      const envFallback = providerConfig?.authTokenEnvVar ? Boolean(process.env[providerConfig.authTokenEnvVar]) : false;
+      res.json({ set: set || envFallback, source: set ? "db" : (envFallback ? "env" : "none") });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // Test provider connection by making a minimal API call
+  app.post("/api/providers/:id/test", requireSecret, async (req, res) => {
+    const { id } = req.params;
+    try {
+      const providerConfig = await getProvider(id) || (config.providers || {})[id];
+      if (!providerConfig) return res.status(404).json({ ok: false, error: "Provider not found" });
+
+      const apiKey = await resolveApiKey({ ...providerConfig, id });
+      const type = providerConfig.type || "claude-cli";
+      const start = Date.now();
+
+      if (type === "openai") {
+        const baseUrl = providerConfig.baseUrl || "https://api.openai.com";
+        const model = providerConfig.modelMapping?.haiku || "gpt-4o-mini";
+        const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({ model, messages: [{ role: "user", content: "Say: ok" }], max_tokens: 5 }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          return res.status(502).json({ ok: false, error: `API returned ${resp.status}: ${text.slice(0, 200)}` });
+        }
+        const data = await resp.json();
+        return res.json({ ok: true, latencyMs: Date.now() - start, model, response: data.choices?.[0]?.message?.content });
+      }
+
+      if (type === "gemini") {
+        const model = providerConfig.modelMapping?.haiku || "gemini-2.0-flash-lite";
+        const resp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contents: [{ parts: [{ text: "Say: ok" }] }] }),
+            signal: AbortSignal.timeout(15000),
+          }
+        );
+        if (!resp.ok) {
+          const text = await resp.text();
+          return res.status(502).json({ ok: false, error: `Gemini API returned ${resp.status}: ${text.slice(0, 200)}` });
+        }
+        const data = await resp.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        return res.json({ ok: true, latencyMs: Date.now() - start, model, response: text });
+      }
+
+      if (type === "anthropic-direct") {
+        const resp = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: providerConfig.modelMapping?.haiku || "claude-haiku-4-5-20251001",
+            max_tokens: 5,
+            messages: [{ role: "user", content: "Say: ok" }],
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          return res.status(502).json({ ok: false, error: `Anthropic API returned ${resp.status}: ${text.slice(0, 200)}` });
+        }
+        const data = await resp.json();
+        return res.json({ ok: true, latencyMs: Date.now() - start, model: data.model, response: data.content?.[0]?.text });
+      }
+
+      // claude-cli: just verify a key or OAuth credential exists
+      const hasKey = apiKey || (id === "claude" && process.env.ANTHROPIC_API_KEY);
+      res.json({ ok: true, latencyMs: Date.now() - start, note: "claude-cli provider — authentication verified via credential check", credentialPresent: Boolean(hasKey) });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // AGENT ROUTING OVERRIDES
+  // ---------------------------------------------------------------------------
+
+  app.get("/api/routing/agents", requireSecret, async (_req, res) => {
+    try {
+      const dbRouting = await listAgentRouting();
+      // Merge with config.json routing so static config is visible
+      const fileRouting = config.routing || {};
+      const agentToProvider = fileRouting.agentToProvider || {};
+      const agentToModel = fileRouting.agentToModel || {};
+      const merged = new Map();
+      const allAgents = new Set([...Object.keys(agentToProvider), ...Object.keys(agentToModel)]);
+      for (const agentName of allAgents) {
+        merged.set(agentName, {
+          agentName,
+          providerId: agentToProvider[agentName] || null,
+          modelTier: agentToModel[agentName] || null,
+          source: "config",
+        });
+      }
+      for (const r of dbRouting) {
+        merged.set(r.agentName, { ...r, source: "db" });
+      }
+      res.json([...merged.values()]);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.put("/api/routing/agents/:name", requireSecret, async (req, res) => {
+    const agentName = req.params.name;
+    const { providerId, modelTier, effort, toolRestrictions } = req.body || {};
+    try {
+      await upsertAgentRouting({ agentName, providerId, modelTier, effort, toolRestrictions });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.delete("/api/routing/agents/:name", requireSecret, async (req, res) => {
+    const { name } = req.params;
+    try {
+      await deleteAgentRouting(name);
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });

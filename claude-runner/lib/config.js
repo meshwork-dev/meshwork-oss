@@ -104,7 +104,7 @@ function loadConfig() {
 
     // Provider configuration (claude, zai, etc.)
     providers: fileConfig.providers || {
-      claude: { baseUrl: null, authTokenEnvVar: "ANTHROPIC_API_KEY" }
+      claude: { type: "claude-cli", authMode: "auto", baseUrl: null, authTokenEnvVar: "ANTHROPIC_API_KEY" }
     },
 
     // Model routing configuration

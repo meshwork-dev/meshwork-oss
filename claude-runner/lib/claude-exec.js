@@ -193,8 +193,18 @@ async function runClaude(job) {
 
   // Get provider-specific environment
   const { env: providerEnv, provider, providerConfig } = getSpawnEnv(job);
+  const providerType = providerConfig?.type || "claude-cli";
 
-  // Pre-flight: ensure OAuth token is valid (skip for local/zai — they use their own auth)
+  // Route non-CLI providers to the direct API executor
+  // (openai, gemini, anthropic-direct, etc.)
+  if (providerType !== "claude-cli") {
+    const model = job.selectedModel || "sonnet";
+    const modelId = providerConfig?.modelMapping?.[model] || providerConfig?.modelMapping?.default || model;
+    const { runDirectApi } = require("./llm-direct");
+    return runDirectApi(job, provider, providerConfig, modelId);
+  }
+
+  // Pre-flight: ensure OAuth token is valid (skip for non-claude-cli providers)
   if (provider === "claude") {
     await ensureOAuthValid(job).catch(() => {}); // Best-effort — don't block if check fails
   }

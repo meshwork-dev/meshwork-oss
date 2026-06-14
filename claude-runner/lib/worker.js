@@ -78,6 +78,7 @@ const {
   onPipelinePhaseComplete,
 } = require("./pipelines");
 const { preReadCodebase } = require("./prompts");
+const { createGitHubPR } = require("./github");
 const {
   buildQualityGateRetryContext,
   repairQualityGateFailure,
@@ -819,6 +820,20 @@ async function tickWorker() {
     // Read task progress for cross-phase visibility
     const taskProgress = job.issueKey ? readTaskProgress(job.issueKey) : null;
 
+    // For GitHub-backed products in delivery mode: push branch + open PR
+    const jobProduct = resolveProduct(job);
+    let prUrl = null;
+    if (jobProduct?.github && job.mode === "delivery") {
+      prUrl = await createGitHubPR(job, jobProduct).catch((e) => {
+        appendLog(job.logFile, `[${nowIso()}] WARNING: GitHub PR creation failed: ${e.message}\n`);
+        return null;
+      });
+      if (prUrl) {
+        job.prUrl = prUrl;
+        appendLog(job.logFile, `[${nowIso()}] PR created: ${prUrl}\n`);
+      }
+    }
+
     callbackPayload = {
       jobId: job.jobId,
       status: job.status,
@@ -833,6 +848,7 @@ async function tickWorker() {
       usage: job.usage,
       qualityGate: job.qualityGate || null,
       taskProgress,
+      prUrl: prUrl || null,
       error: null,
       logUrl: `${RUNNER_PUBLIC_URL}/jobs/${job.jobId}/log`,
       finishedAt: job.finishedAt,

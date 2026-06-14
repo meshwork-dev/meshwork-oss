@@ -278,6 +278,11 @@ generate_env() {
   env_set RUNNER_DB_PASSWORD      "$RUNNER_DB_PASSWORD"
   env_set PROJECT_DIR             "${PRODUCT_DIR:-${PROJECT_DIR:-}}"
 
+  # Encryption key for stored API keys (BYOK) — generated once, 32 bytes = 64 hex chars
+  if [[ -z "$(env_get RUNNER_ENCRYPTION_KEY)" ]]; then
+    env_set RUNNER_ENCRYPTION_KEY "$(openssl rand -hex 32)"
+  fi
+
   # N8N secrets — generated once, preserved on re-runs (idempotent).
   if [[ -z "$(env_get N8N_BASIC_AUTH_PASSWORD)" ]]; then
     env_set N8N_BASIC_AUTH_PASSWORD "$(openssl rand -hex 16)"

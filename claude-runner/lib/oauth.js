@@ -77,9 +77,23 @@ function getOAuthEnvVars() {
 }
 
 /**
- * Get spawn environment based on provider routing
- * Z.ai agents get ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN set
- * per https://docs.z.ai/devpack/tool/claude
+ * Determine whether a provider should use API key auth instead of OAuth.
+ * - "oauth"   → always OAuth
+ * - "api-key" → always API key
+ * - "auto"    → use API key if the named env var is set, otherwise OAuth
+ */
+function isApiKeyMode(providerConfig) {
+  const mode = providerConfig?.authMode || "auto";
+  if (mode === "oauth")    return false;
+  if (mode === "api-key")  return true;
+  return Boolean(process.env[providerConfig?.authTokenEnvVar || "ANTHROPIC_API_KEY"]);
+}
+
+/**
+ * Get spawn environment based on provider routing.
+ * - claude-cli providers: inject OAuth tokens unless API key mode is active
+ * - Non-claude-cli providers (openai, gemini, etc.): handled by llm-direct.js; env not used
+ * - Anthropic-compatible providers with baseUrl (z.ai): set ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN
  */
 function getSpawnEnv(job) {
   const routing = config.routing || {};
@@ -89,21 +103,29 @@ function getSpawnEnv(job) {
   // Provider priority: explicit job request > agent routing > default (claude)
   const provider = job.requestedProvider || agentToProvider[job.agent] || "claude";
   const providerConfig = providers[provider] || providers.claude;
+  const providerType = providerConfig?.type || "claude-cli";
 
-  const env = { ...process.env, ...getOAuthEnvVars() };
+  const env = { ...process.env };
 
-  if (provider === "zai" && providerConfig) {
-    // Set Z.ai-specific environment variables per Z.ai docs
-    // Uses ANTHROPIC_AUTH_TOKEN (not ANTHROPIC_API_KEY)
-    env.ANTHROPIC_BASE_URL = providerConfig.baseUrl;
-    const apiKey = process.env[providerConfig.authTokenEnvVar];
-    if (apiKey) {
-      env.ANTHROPIC_AUTH_TOKEN = apiKey;
+  if (providerType === "claude-cli") {
+    if (!isApiKeyMode(providerConfig)) {
+      // OAuth mode: inject token env vars so Claude CLI can authenticate
+      Object.assign(env, getOAuthEnvVars());
     }
-    if (providerConfig.timeoutMs) {
-      env.API_TIMEOUT_MS = String(providerConfig.timeoutMs);
+    // For Anthropic-compatible base URL providers (z.ai, etc.)
+    if (providerConfig?.baseUrl) {
+      env.ANTHROPIC_BASE_URL = providerConfig.baseUrl;
+      const apiKey = process.env[providerConfig.authTokenEnvVar];
+      if (apiKey) {
+        env.ANTHROPIC_AUTH_TOKEN = apiKey;
+      }
+      if (providerConfig.timeoutMs) {
+        env.API_TIMEOUT_MS = String(providerConfig.timeoutMs);
+      }
+      if (provider !== "claude") {
+        console.log(`[getSpawnEnv] Provider routing: agent=${job.agent}, provider=${provider}, baseUrl=${providerConfig.baseUrl}`);
+      }
     }
-    console.log(`[getSpawnEnv] Z.ai routing: agent=${job.agent}, baseUrl=${providerConfig.baseUrl}`);
   }
 
   return { env, provider, providerConfig };
@@ -115,6 +137,14 @@ function getSpawnEnv(job) {
  * Also attempts token refresh via Anthropic's OAuth endpoint if token is near expiry.
  */
 async function ensureOAuthValid(job) {
+  // Skip OAuth check when the provider uses API key auth
+  const providers = config.providers || {};
+  const routing = config.routing || {};
+  const agentToProvider = routing.agentToProvider || {};
+  const provider = job.requestedProvider || agentToProvider[job.agent] || "claude";
+  const providerConfig = providers[provider] || providers.claude;
+  if (isApiKeyMode(providerConfig)) return true;
+
   // 1. Fast check: inspect credentials file for token expiry
   const homeDir = process.env.HOME || "/home/node";
   const credFile = path.join(homeDir, ".claude", ".credentials.json");
@@ -230,6 +260,7 @@ module.exports = {
   OAUTH_CACHE_TTL_MS,
   getOAuthEnvVars,
   getSpawnEnv,
+  isApiKeyMode,
   ensureOAuthValid,
   refreshOAuthToken,
 };

@@ -31,6 +31,7 @@ module.exports = {
   reconcileMergedWorktrees,
   withMergeLock,
   isBranchMergedToTrunk,
+  ensureRepoClone,
 };
 
 
@@ -721,4 +722,18 @@ function isBranchMergedToTrunk(baseRepo, issueKey) {
     console.log(`[${nowIso()}] Dependency check: trunk merge probe failed for ${baseRepo}: ${e.message}`);
     return true; // Fail open
   }
+}
+
+/**
+ * For GitHub-backed products (product.github.owner/repo defined), ensure the
+ * repo is cloned locally before worktree creation. Returns the local base repo path.
+ * For products with a local workingDir, returns the workingDir unchanged.
+ */
+async function ensureRepoClone(product) {
+  if (!product?.github?.owner || !product?.github?.repo) {
+    // Not a GitHub-backed product — use local workingDir
+    return product?.workingDir || null;
+  }
+  const { ensureRepoClone: ghEnsure } = require("./github");
+  return ghEnsure(product);
 }

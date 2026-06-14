@@ -116,6 +116,7 @@ const JOB_CAMEL_TO_SNAKE = {
   preReadBrief: "pre_read_brief",
   historyText: "history_text",
   streamEvents: "stream_events",
+  prUrl: "pr_url",
 };
 
 /** Inverse map: snake_case → camelCase for job rows */
@@ -182,6 +183,7 @@ const JOB_DB_COLUMNS = new Set([
   "pre_read_brief",
   "history_text",
   "stream_events",
+  "pr_url",
 ]);
 
 const JOB_JSONB_COLS = new Set([
@@ -850,6 +852,40 @@ const MIGRATIONS = [
 
   // 018 — job heartbeat (stale-job recovery: detect jobs whose runner died mid-execution)
   `ALTER TABLE jobs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`,
+
+  // 019 — provider configs (BYOK multi-provider support)
+  `CREATE TABLE IF NOT EXISTS provider_configs (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL DEFAULT 'claude-cli',
+    display_name TEXT,
+    base_url TEXT,
+    auth_mode TEXT NOT NULL DEFAULT 'api-key',
+    model_mapping JSONB,
+    timeout_ms INTEGER,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS provider_secrets (
+    provider_id TEXT PRIMARY KEY REFERENCES provider_configs(id) ON DELETE CASCADE,
+    encrypted_key TEXT NOT NULL,
+    iv TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+
+  // 020 — per-agent routing overrides (DB-backed, replaces config.json routing section)
+  `CREATE TABLE IF NOT EXISTS agent_routing (
+    agent_name TEXT PRIMARY KEY,
+    provider_id TEXT REFERENCES provider_configs(id) ON DELETE SET NULL,
+    model_tier TEXT,
+    effort TEXT,
+    tool_restrictions JSONB,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+
+  // 021 — jobs: store resolved PR URL from GitHub-native delivery
+  `ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pr_url TEXT`,
 ];
 
 async function runMigrations(client) {
@@ -1057,6 +1093,21 @@ const jobsRepo = {
       vals.push(JOB_JSONB_COLS.has(col) ? jsonb(val) : norm(val));
       i++;
     }
+    await pool.query(`UPDATE jobs SET ${sets.join(", ")} WHERE job_id = $1`, vals);
+  },
+
+  async update(jobId, fields = {}) {
+    const sets = [];
+    const vals = [jobId];
+    let i = 2;
+    for (const [key, val] of Object.entries(fields)) {
+      const col = JOB_CAMEL_TO_SNAKE[key] || camelToSnake(key);
+      if (!JOB_DB_COLUMNS.has(col)) continue;
+      sets.push(`${col} = $${i}`);
+      vals.push(JOB_JSONB_COLS.has(col) ? jsonb(val) : norm(val));
+      i++;
+    }
+    if (sets.length === 0) return;
     await pool.query(`UPDATE jobs SET ${sets.join(", ")} WHERE job_id = $1`, vals);
   },
 
@@ -1965,6 +2016,144 @@ const conversationsRepo = {
 };
 
 // ---------------------------------------------------------------------------
+// provider configs repository (BYOK multi-provider)
+// ---------------------------------------------------------------------------
+
+const providersRepo = {
+  async list() {
+    const { rows } = await pool.query("SELECT * FROM provider_configs ORDER BY id");
+    return rows.map((r) => ({
+      id: r.id,
+      type: r.type,
+      displayName: r.display_name,
+      baseUrl: r.base_url,
+      authMode: r.auth_mode,
+      modelMapping: r.model_mapping,
+      timeoutMs: r.timeout_ms,
+      enabled: r.enabled,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  },
+
+  async get(id) {
+    const { rows } = await pool.query("SELECT * FROM provider_configs WHERE id = $1", [id]);
+    if (!rows[0]) return null;
+    const r = rows[0];
+    return {
+      id: r.id,
+      type: r.type,
+      displayName: r.display_name,
+      baseUrl: r.base_url,
+      authMode: r.auth_mode,
+      modelMapping: r.model_mapping,
+      timeoutMs: r.timeout_ms,
+      enabled: r.enabled,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  },
+
+  async upsert({ id, type, displayName, baseUrl, authMode, modelMapping, timeoutMs, enabled }) {
+    await pool.query(
+      `INSERT INTO provider_configs (id, type, display_name, base_url, auth_mode, model_mapping, timeout_ms, enabled, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         type = EXCLUDED.type,
+         display_name = EXCLUDED.display_name,
+         base_url = EXCLUDED.base_url,
+         auth_mode = EXCLUDED.auth_mode,
+         model_mapping = EXCLUDED.model_mapping,
+         timeout_ms = EXCLUDED.timeout_ms,
+         enabled = EXCLUDED.enabled,
+         updated_at = NOW()`,
+      [id, type || "claude-cli", displayName || null, baseUrl || null, authMode || "api-key",
+       modelMapping ? JSON.stringify(modelMapping) : null, timeoutMs || null, enabled !== false]
+    );
+  },
+
+  async delete(id) {
+    await pool.query("DELETE FROM provider_configs WHERE id = $1", [id]);
+  },
+
+  async setSecret(providerId, encryptedKey, iv) {
+    await pool.query(
+      `INSERT INTO provider_secrets (provider_id, encrypted_key, iv, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (provider_id) DO UPDATE SET encrypted_key = $2, iv = $3, updated_at = NOW()`,
+      [providerId, encryptedKey, iv]
+    );
+  },
+
+  async getSecret(providerId) {
+    const { rows } = await pool.query(
+      "SELECT encrypted_key, iv, updated_at FROM provider_secrets WHERE provider_id = $1",
+      [providerId]
+    );
+    if (!rows[0]) return null;
+    return { encryptedKey: rows[0].encrypted_key, iv: rows[0].iv, updatedAt: rows[0].updated_at };
+  },
+
+  async hasSecret(providerId) {
+    const { rows } = await pool.query(
+      "SELECT 1 FROM provider_secrets WHERE provider_id = $1",
+      [providerId]
+    );
+    return rows.length > 0;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// agent routing overrides repository
+// ---------------------------------------------------------------------------
+
+const agentRoutingRepo = {
+  async list() {
+    const { rows } = await pool.query("SELECT * FROM agent_routing ORDER BY agent_name");
+    return rows.map((r) => ({
+      agentName: r.agent_name,
+      providerId: r.provider_id,
+      modelTier: r.model_tier,
+      effort: r.effort,
+      toolRestrictions: r.tool_restrictions,
+      updatedAt: r.updated_at,
+    }));
+  },
+
+  async get(agentName) {
+    const { rows } = await pool.query("SELECT * FROM agent_routing WHERE agent_name = $1", [agentName]);
+    if (!rows[0]) return null;
+    return {
+      agentName: rows[0].agent_name,
+      providerId: rows[0].provider_id,
+      modelTier: rows[0].model_tier,
+      effort: rows[0].effort,
+      toolRestrictions: rows[0].tool_restrictions,
+      updatedAt: rows[0].updated_at,
+    };
+  },
+
+  async upsert({ agentName, providerId, modelTier, effort, toolRestrictions }) {
+    await pool.query(
+      `INSERT INTO agent_routing (agent_name, provider_id, model_tier, effort, tool_restrictions, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (agent_name) DO UPDATE SET
+         provider_id = EXCLUDED.provider_id,
+         model_tier = EXCLUDED.model_tier,
+         effort = EXCLUDED.effort,
+         tool_restrictions = EXCLUDED.tool_restrictions,
+         updated_at = NOW()`,
+      [agentName, providerId || null, modelTier || null, effort || null,
+       toolRestrictions ? JSON.stringify(toolRestrictions) : null]
+    );
+  },
+
+  async delete(agentName) {
+    await pool.query("DELETE FROM agent_routing WHERE agent_name = $1", [agentName]);
+  },
+};
+
+// ---------------------------------------------------------------------------
 // retention pruning (RETENTION_DAYS)
 // ---------------------------------------------------------------------------
 
@@ -2009,6 +2198,8 @@ module.exports = {
   issueTransitions: issueTransitionsRepo,
   notifications: notificationsRepo,
   conversations: conversationsRepo,
+  providers: providersRepo,
+  agentRouting: agentRoutingRepo,
   retention: retentionRepo,
   // Exposed for testing / advanced use
   _helpers: { camelToSnake, snakeToCamel, jobToRow, rowToJob, pipelineToRow, rowToPipeline, isTransientDbError, installQueryRetry },
