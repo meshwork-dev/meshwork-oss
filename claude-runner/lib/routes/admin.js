@@ -3,6 +3,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { buildOpenAIUrl } = require("../llm-direct");
 const db = require("../../db");
 const { FAILED_CALLBACKS_DIR, SECRET, config } = require("../config");
 const {
@@ -1254,9 +1255,9 @@ function registerAdminRoutes(app) {
       const start = Date.now();
 
       if (type === "openai") {
-        const baseUrl = providerConfig.baseUrl || "https://api.openai.com";
+        const baseUrl = providerConfig.baseUrl || null;
         const model = providerConfig.modelMapping?.haiku || "gpt-4o-mini";
-        const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
+        const resp = await fetch(buildOpenAIUrl(baseUrl), {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
           body: JSON.stringify({ model, messages: [{ role: "user", content: "Say: ok" }], max_tokens: 5 }),

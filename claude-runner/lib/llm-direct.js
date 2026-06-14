@@ -531,4 +531,4 @@ async function runDirectApi(job, provider, providerConfig, modelId) {
   }
 }
 
-module.exports = { runDirectApi };
+module.exports = { runDirectApi, buildOpenAIUrl };
