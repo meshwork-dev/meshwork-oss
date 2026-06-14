@@ -1212,6 +1212,17 @@ function registerAdminRoutes(app) {
       return res.status(400).json({ ok: false, error: "key is required" });
     }
     try {
+      // Auto-upsert the provider config row if it only exists in config.json
+      // (provider_secrets has a FK to provider_configs, so the row must exist first)
+      const existing = await getProvider(id);
+      if (!existing) {
+        const fileProvider = (config.providers || {})[id];
+        if (fileProvider) {
+          await upsertProvider({ id, type: fileProvider.type || "claude-cli", authMode: fileProvider.authMode, enabled: true });
+        } else {
+          return res.status(404).json({ ok: false, error: `Provider '${id}' not found — create it first via POST /api/providers` });
+        }
+      }
       await setProviderApiKey(id, key.trim());
       res.json({ ok: true });
     } catch (e) {

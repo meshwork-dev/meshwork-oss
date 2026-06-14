@@ -128,15 +128,17 @@ choose_mode() {
   info "Found existing .env — this looks like a previous setup."
   info ""
   info "  1) Keep current config, restart services         (default)"
-  info "  2) Reconfigure (re-prompt for everything)"
-  info "  3) Add another product"
-  info "  4) Exit"
-  printf "\n  ${BOLD}Choose [1/2/3/4]:${RESET} "
+  info "  2) Upgrade (git pull + rebuild + restart)"
+  info "  3) Reconfigure (re-prompt for everything)"
+  info "  4) Add another product"
+  info "  5) Exit"
+  printf "\n  ${BOLD}Choose [1/2/3/4/5]:${RESET} "
   read -r choice
   case "${choice:-1}" in
-    2) SETUP_MODE="reconfigure" ;;
-    3) SETUP_MODE="add-product" ;;
-    4) info "Bye."; exit 0 ;;
+    2) SETUP_MODE="upgrade" ;;
+    3) SETUP_MODE="reconfigure" ;;
+    4) SETUP_MODE="add-product" ;;
+    5) info "Bye."; exit 0 ;;
     *) SETUP_MODE="restart" ;;
   esac
 }
@@ -610,9 +612,38 @@ print_summary() {
 # =============================================================================
 # Main
 # =============================================================================
+do_upgrade() {
+  header "Upgrading Meshwork"
+
+  if [[ ! -d "$SCRIPT_DIR/.git" ]]; then
+    warn "No .git directory found — cannot run git pull."
+    warn "If you installed from a zip/tarball, manually copy the new files and re-run ./setup.sh."
+    return 1
+  fi
+
+  info "Pulling latest code..."
+  git -C "$SCRIPT_DIR" pull || { warn "git pull failed — check network/credentials and retry."; return 1; }
+  success "Code updated."
+
+  info "Regenerating Compose config..."
+  load_existing_config
+  generate_compose
+
+  info "Rebuilding images and restarting services..."
+  start_services
+  print_summary
+}
+
 main() {
   if [[ "${1:-}" == "--destroy" ]]; then
     destroy_deployment
+    exit 0
+  fi
+
+  if [[ "${1:-}" == "--upgrade" ]]; then
+    print_banner
+    check_prerequisites
+    do_upgrade
     exit 0
   fi
 
@@ -652,6 +683,9 @@ main() {
       generate_compose
       start_services
       print_summary
+      ;;
+    upgrade)
+      do_upgrade
       ;;
   esac
 }
