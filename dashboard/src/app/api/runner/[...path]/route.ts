@@ -81,11 +81,13 @@ async function proxy(
 
   const headers: Record<string, string> = { "x-runner-secret": secret };
   const contentType = req.headers.get("content-type");
-  if (contentType) headers["content-type"] = contentType;
+  const hasBody = req.method !== "GET" && req.method !== "HEAD";
+  // Always set content-type for body-bearing requests so express.json() parses reliably
+  headers["content-type"] = contentType || (hasBody ? "application/json" : "");
+  if (!headers["content-type"]) delete headers["content-type"];
   const accept = req.headers.get("accept");
   if (accept) headers["accept"] = accept;
 
-  const hasBody = req.method !== "GET" && req.method !== "HEAD";
   const body = hasBody ? await req.arrayBuffer() : undefined;
 
   let upstream: Response;

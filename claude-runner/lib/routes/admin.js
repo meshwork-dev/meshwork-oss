@@ -124,10 +124,9 @@ function registerAdminRoutes(app) {
    */
   app.post("/api/products/onboard", requireSecret, (req, res) => {
     const body = req.body || {};
-    console.log(`[onboard] body keys=${Object.keys(body).join(",") || "(empty)"} content-type=${req.headers["content-type"]}`);
 
     const name = (body.name || "").trim();
-    if (!name) return res.status(400).json({ ok: false, error: `name is required (received keys: ${Object.keys(body).join(", ") || "none"})` });
+    if (!name) return res.status(400).json({ ok: false, error: "name is required" });
 
     const workingDir = (body.workingDir || "").trim();
 
