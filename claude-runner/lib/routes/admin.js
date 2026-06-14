@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { buildOpenAIUrl } = require("../llm-direct");
+const { resolveProviderModel } = require("../claude-exec");
 const db = require("../../db");
 const { FAILED_CALLBACKS_DIR, SECRET, config } = require("../config");
 const {
@@ -1256,7 +1257,7 @@ function registerAdminRoutes(app) {
 
       if (type === "openai") {
         const baseUrl = providerConfig.baseUrl || null;
-        const model = providerConfig.modelMapping?.haiku || "gpt-4o-mini";
+        const model = resolveProviderModel(providerConfig, null) || "gpt-4o-mini";
         const resp = await fetch(buildOpenAIUrl(baseUrl), {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -1272,7 +1273,7 @@ function registerAdminRoutes(app) {
       }
 
       if (type === "gemini") {
-        const model = providerConfig.modelMapping?.haiku || "gemini-2.0-flash-lite";
+        const model = resolveProviderModel(providerConfig, null) || "gemini-2.0-flash-lite";
         const resp = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
           {
@@ -1300,7 +1301,7 @@ function registerAdminRoutes(app) {
             "anthropic-version": "2023-06-01",
           },
           body: JSON.stringify({
-            model: providerConfig.modelMapping?.haiku || "claude-haiku-4-5-20251001",
+            model: resolveProviderModel(providerConfig, null) || "claude-haiku-4-5-20251001",
             max_tokens: 5,
             messages: [{ role: "user", content: "Say: ok" }],
           }),

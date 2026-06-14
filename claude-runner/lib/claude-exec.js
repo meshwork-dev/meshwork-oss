@@ -25,6 +25,16 @@ const {
 const { jobEmitter, jobs } = require("./state");
 const { appendLog, nowIso } = require("./util");
 
+// Resolve model ID for a non-CLI provider: prefer exact named match, then
+// "default", then the first value in the mapping, then fall back to the tier name.
+function resolveProviderModel(providerConfig, tier) {
+  const m = providerConfig?.modelMapping;
+  if (!m) return tier || "default";
+  return m[tier] || m.default || Object.values(m).find(Boolean) || tier || "default";
+}
+
+module.exports.resolveProviderModel = resolveProviderModel;
+
 // Function declarations are hoisted: exporting before requiring sibling
 // modules keeps require cycles safe (each module's exports are complete
 // before any sibling starts loading).
@@ -198,8 +208,7 @@ async function runClaude(job) {
   // Route non-CLI providers to the direct API executor
   // (openai, gemini, anthropic-direct, etc.)
   if (providerType !== "claude-cli") {
-    const model = job.selectedModel || "sonnet";
-    const modelId = providerConfig?.modelMapping?.[model] || providerConfig?.modelMapping?.default || model;
+    const modelId = resolveProviderModel(providerConfig, job.selectedModel);
     const { runDirectApi } = require("./llm-direct");
     return runDirectApi(job, provider, providerConfig, modelId);
   }
@@ -210,11 +219,10 @@ async function runClaude(job) {
   }
 
   // Get selected model and resolve to full model ID
-  // Providers with modelMapping (e.g. zai) use their own IDs
   const model = job.selectedModel || "sonnet";
   let modelId;
   if (providerConfig?.modelMapping) {
-    modelId = providerConfig.modelMapping[model] || providerConfig.modelMapping.default || providerConfig.modelMapping.sonnet;
+    modelId = resolveProviderModel(providerConfig, model);
   } else {
     modelId = config.claude.models[model] || config.claude.models.sonnet;
   }

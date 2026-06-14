@@ -481,9 +481,9 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
   const [editDisplayName, setEditDisplayName] = useState(provider.displayName ?? "");
   const [editType, setEditType] = useState(provider.type);
   const [editBaseUrl, setEditBaseUrl] = useState(provider.baseUrl ?? "");
-  const [editOpus, setEditOpus] = useState(provider.modelMapping?.opus ?? "");
-  const [editSonnet, setEditSonnet] = useState(provider.modelMapping?.sonnet ?? "");
-  const [editHaiku, setEditHaiku] = useState(provider.modelMapping?.haiku ?? "");
+  const [editDefaultModel, setEditDefaultModel] = useState(
+    provider.modelMapping?.default ?? Object.values(provider.modelMapping ?? {}).find(Boolean) ?? ""
+  );
   const [savingEdit, setSavingEdit] = useState(false);
   const [editMsg, setEditMsg] = useState<string | null>(null);
 
@@ -525,16 +525,13 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
     setSavingEdit(true);
     setEditMsg(null);
     try {
-      const modelMapping: Record<string, string> = {};
-      if (editOpus.trim()) modelMapping.opus = editOpus.trim();
-      if (editSonnet.trim()) modelMapping.sonnet = editSonnet.trim();
-      if (editHaiku.trim()) modelMapping.haiku = editHaiku.trim();
+      const modelMapping = editDefaultModel.trim() ? { default: editDefaultModel.trim() } : undefined;
       await getAPI().upsertProvider({
         id: provider.id,
         type: editType,
         displayName: editDisplayName || undefined,
         baseUrl: editBaseUrl || undefined,
-        modelMapping: Object.keys(modelMapping).length ? modelMapping : undefined,
+        modelMapping,
       });
       setEditing(false);
       setEditMsg(null);
@@ -663,22 +660,13 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
             </div>
           </div>
           <div>
-            <label className="text-xs text-zinc-400 mb-1 block">Model IDs</label>
-            <div className="grid grid-cols-3 gap-2">
-              {([["opus", editOpus, setEditOpus], ["sonnet", editSonnet, setEditSonnet], ["haiku", editHaiku, setEditHaiku]] as const).map(
-                ([tier, val, set]) => (
-                  <div key={tier}>
-                    <label className="text-[10px] text-zinc-500 mb-0.5 block capitalize">{tier}</label>
-                    <input
-                      value={val}
-                      onChange={(e) => set(e.target.value)}
-                      placeholder={tier === "opus" ? "e.g. gpt-4o" : tier === "sonnet" ? "e.g. gpt-4o-mini" : "e.g. gpt-4o-mini"}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                    />
-                  </div>
-                )
-              )}
-            </div>
+            <label className="text-xs text-zinc-400 mb-1 block">Default model ID</label>
+            <input
+              value={editDefaultModel}
+              onChange={(e) => setEditDefaultModel(e.target.value)}
+              placeholder="e.g. gpt-4o, claude-3-7-sonnet-20250219, llama3.3:70b"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-zinc-500"
+            />
           </div>
           {editMsg && <p className="text-xs text-red-400">{editMsg}</p>}
           <div className="flex justify-end">
@@ -693,18 +681,15 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
         </div>
       )}
 
-      {modelMapping && !editing && (
-        <div className="grid grid-cols-3 gap-2 text-xs">
-          {(["opus", "sonnet", "haiku"] as const).map((tier) =>
-            modelMapping[tier] ? (
-              <div key={tier} className="bg-zinc-800 rounded px-2 py-1">
-                <span className="text-zinc-500 capitalize">{tier}: </span>
-                <span className="text-zinc-300 font-mono truncate block">{modelMapping[tier]}</span>
-              </div>
-            ) : null
-          )}
-        </div>
-      )}
+      {modelMapping && !editing && (() => {
+        const defaultModel = modelMapping.default || Object.values(modelMapping).find(Boolean);
+        return defaultModel ? (
+          <div className="text-xs bg-zinc-800 rounded px-2 py-1 flex gap-1">
+            <span className="text-zinc-500">Model:</span>
+            <span className="text-zinc-300 font-mono truncate">{defaultModel}</span>
+          </div>
+        ) : null;
+      })()}
 
       {provider.type !== "claude-cli" && (
         <div className="space-y-2">
@@ -756,9 +741,7 @@ function AddProviderForm({ onAdded }: { onAdded: () => void }) {
   const [type, setType] = useState("openai");
   const [displayName, setDisplayName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [opus, setOpus] = useState("");
-  const [sonnet, setSonnet] = useState("");
-  const [haiku, setHaiku] = useState("");
+  const [defaultModel, setDefaultModel] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -767,20 +750,15 @@ function AddProviderForm({ onAdded }: { onAdded: () => void }) {
     setSaving(true);
     setError(null);
     try {
-      const modelMapping: Record<string, string> = {};
-      if (opus.trim()) modelMapping.opus = opus.trim();
-      if (sonnet.trim()) modelMapping.sonnet = sonnet.trim();
-      if (haiku.trim()) modelMapping.haiku = haiku.trim();
       await getAPI().upsertProvider({
         id: id.trim(),
         type,
         displayName: displayName || undefined,
         baseUrl: baseUrl || undefined,
-        modelMapping: Object.keys(modelMapping).length ? modelMapping : undefined,
+        modelMapping: defaultModel.trim() ? { default: defaultModel.trim() } : undefined,
       });
       setOpen(false);
-      setId(""); setType("openai"); setDisplayName(""); setBaseUrl("");
-      setOpus(""); setSonnet(""); setHaiku("");
+      setId(""); setType("openai"); setDisplayName(""); setBaseUrl(""); setDefaultModel("");
       onAdded();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add provider");
@@ -832,18 +810,10 @@ function AddProviderForm({ onAdded }: { onAdded: () => void }) {
         </div>
       </div>
       <div>
-        <label className="text-xs text-zinc-400 mb-1 block">Model IDs (optional)</label>
-        <div className="grid grid-cols-3 gap-2">
-          {([["opus", opus, setOpus], ["sonnet", sonnet, setSonnet], ["haiku", haiku, setHaiku]] as const).map(
-            ([tier, val, set]) => (
-              <div key={tier}>
-                <label className="text-[10px] text-zinc-500 mb-0.5 block capitalize">{tier}</label>
-                <input value={val} onChange={(e) => set(e.target.value)} placeholder="model-id"
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-zinc-500" />
-              </div>
-            )
-          )}
-        </div>
+        <label className="text-xs text-zinc-400 mb-1 block">Default model ID (optional)</label>
+        <input value={defaultModel} onChange={(e) => setDefaultModel(e.target.value)}
+          placeholder="e.g. gpt-4o, claude-3-7-sonnet-20250219, llama3.3:70b"
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-zinc-500" />
       </div>
       {error && <p className="text-xs text-red-400">{error}</p>}
       <div className="flex gap-2 justify-end">
