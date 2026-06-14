@@ -195,8 +195,18 @@ function toAnthropicToolSchema(tool) {
 // Provider-specific API callers
 // ---------------------------------------------------------------------------
 
+function buildOpenAIUrl(baseUrl) {
+  const base = (baseUrl || "https://api.openai.com").replace(/\/$/, "");
+  try {
+    const { pathname } = new URL(base);
+    if (pathname.endsWith("/chat/completions")) return base;
+    if (pathname !== "/") return `${base}/chat/completions`;
+  } catch (_) {}
+  return `${base}/v1/chat/completions`;
+}
+
 async function callOpenAI(messages, tools, modelId, apiKey, baseUrl) {
-  const url = `${(baseUrl || "https://api.openai.com").replace(/\/$/, "")}/v1/chat/completions`;
+  const url = buildOpenAIUrl(baseUrl);
   const body = {
     model: modelId,
     messages,
