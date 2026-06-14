@@ -4,7 +4,6 @@
 const fs = require("fs");
 const path = require("path");
 const { buildOpenAIUrl } = require("../llm-direct");
-const { resolveProviderModel } = require("../claude-exec");
 const db = require("../../db");
 const { FAILED_CALLBACKS_DIR, SECRET, config } = require("../config");
 const {
@@ -42,6 +41,12 @@ const {
   deleteAgentRouting,
 } = require("../provider-store");
 
+
+function resolveProviderModel(providerConfig, tier) {
+  const m = providerConfig?.modelMapping;
+  if (!m) return tier || null;
+  return m[tier] || m.default || Object.values(m).find(Boolean) || tier || null;
+}
 
 function registerAdminRoutes(app) {
   /**

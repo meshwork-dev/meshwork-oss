@@ -60,7 +60,7 @@ const { registerIntegrationRoutes } = require("./lib/routes/integrations");
 
 
 const app = express();
-app.use(express.json({ limit: "20mb", type: ["application/json", "text/plain", "application/*+json"] }));
+app.use(express.json({ limit: "20mb", type: "*/*" }));
 
 // CORS – all endpoints are protected by x-runner-secret, so allow any origin
 app.use((req, res, next) => {
