@@ -481,6 +481,9 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
   const [editDisplayName, setEditDisplayName] = useState(provider.displayName ?? "");
   const [editType, setEditType] = useState(provider.type);
   const [editBaseUrl, setEditBaseUrl] = useState(provider.baseUrl ?? "");
+  const [editOpus, setEditOpus] = useState(provider.modelMapping?.opus ?? "");
+  const [editSonnet, setEditSonnet] = useState(provider.modelMapping?.sonnet ?? "");
+  const [editHaiku, setEditHaiku] = useState(provider.modelMapping?.haiku ?? "");
   const [savingEdit, setSavingEdit] = useState(false);
   const [editMsg, setEditMsg] = useState<string | null>(null);
 
@@ -522,11 +525,16 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
     setSavingEdit(true);
     setEditMsg(null);
     try {
+      const modelMapping: Record<string, string> = {};
+      if (editOpus.trim()) modelMapping.opus = editOpus.trim();
+      if (editSonnet.trim()) modelMapping.sonnet = editSonnet.trim();
+      if (editHaiku.trim()) modelMapping.haiku = editHaiku.trim();
       await getAPI().upsertProvider({
         id: provider.id,
         type: editType,
         displayName: editDisplayName || undefined,
         baseUrl: editBaseUrl || undefined,
+        modelMapping: Object.keys(modelMapping).length ? modelMapping : undefined,
       });
       setEditing(false);
       setEditMsg(null);
@@ -649,9 +657,27 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
               <input
                 value={editBaseUrl}
                 onChange={(e) => setEditBaseUrl(e.target.value)}
-                placeholder="https://api.openai.com"
+                placeholder="https://api.openai.com/v1 or full endpoint URL"
                 className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500"
               />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-zinc-400 mb-1 block">Model IDs</label>
+            <div className="grid grid-cols-3 gap-2">
+              {([["opus", editOpus, setEditOpus], ["sonnet", editSonnet, setEditSonnet], ["haiku", editHaiku, setEditHaiku]] as const).map(
+                ([tier, val, set]) => (
+                  <div key={tier}>
+                    <label className="text-[10px] text-zinc-500 mb-0.5 block capitalize">{tier}</label>
+                    <input
+                      value={val}
+                      onChange={(e) => set(e.target.value)}
+                      placeholder={tier === "opus" ? "e.g. gpt-4o" : tier === "sonnet" ? "e.g. gpt-4o-mini" : "e.g. gpt-4o-mini"}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                    />
+                  </div>
+                )
+              )}
             </div>
           </div>
           {editMsg && <p className="text-xs text-red-400">{editMsg}</p>}
@@ -730,6 +756,9 @@ function AddProviderForm({ onAdded }: { onAdded: () => void }) {
   const [type, setType] = useState("openai");
   const [displayName, setDisplayName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
+  const [opus, setOpus] = useState("");
+  const [sonnet, setSonnet] = useState("");
+  const [haiku, setHaiku] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -738,9 +767,20 @@ function AddProviderForm({ onAdded }: { onAdded: () => void }) {
     setSaving(true);
     setError(null);
     try {
-      await getAPI().upsertProvider({ id: id.trim(), type, displayName: displayName || undefined, baseUrl: baseUrl || undefined });
+      const modelMapping: Record<string, string> = {};
+      if (opus.trim()) modelMapping.opus = opus.trim();
+      if (sonnet.trim()) modelMapping.sonnet = sonnet.trim();
+      if (haiku.trim()) modelMapping.haiku = haiku.trim();
+      await getAPI().upsertProvider({
+        id: id.trim(),
+        type,
+        displayName: displayName || undefined,
+        baseUrl: baseUrl || undefined,
+        modelMapping: Object.keys(modelMapping).length ? modelMapping : undefined,
+      });
       setOpen(false);
       setId(""); setType("openai"); setDisplayName(""); setBaseUrl("");
+      setOpus(""); setSonnet(""); setHaiku("");
       onAdded();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add provider");
@@ -766,7 +806,7 @@ function AddProviderForm({ onAdded }: { onAdded: () => void }) {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs text-zinc-400 mb-1 block">Provider ID</label>
-          <input value={id} onChange={(e) => setId(e.target.value)} placeholder="e.g. openai"
+          <input value={id} onChange={(e) => setId(e.target.value)} placeholder="e.g. zai"
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500" />
         </div>
         <div>
@@ -774,7 +814,7 @@ function AddProviderForm({ onAdded }: { onAdded: () => void }) {
           <select value={type} onChange={(e) => setType(e.target.value)}
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500">
             <option value="claude-cli">Claude CLI</option>
-            <option value="openai">OpenAI</option>
+            <option value="openai">OpenAI / Compatible</option>
             <option value="gemini">Gemini</option>
             <option value="anthropic-direct">Anthropic API (direct)</option>
             <option value="github">GitHub</option>
@@ -782,13 +822,27 @@ function AddProviderForm({ onAdded }: { onAdded: () => void }) {
         </div>
         <div>
           <label className="text-xs text-zinc-400 mb-1 block">Display name (optional)</label>
-          <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="e.g. GPT-4o"
+          <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="e.g. Z.AI"
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500" />
         </div>
         <div>
           <label className="text-xs text-zinc-400 mb-1 block">Base URL (optional)</label>
-          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com"
+          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.z.ai/api/coding/paas/v4"
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-zinc-500" />
+        </div>
+      </div>
+      <div>
+        <label className="text-xs text-zinc-400 mb-1 block">Model IDs (optional)</label>
+        <div className="grid grid-cols-3 gap-2">
+          {([["opus", opus, setOpus], ["sonnet", sonnet, setSonnet], ["haiku", haiku, setHaiku]] as const).map(
+            ([tier, val, set]) => (
+              <div key={tier}>
+                <label className="text-[10px] text-zinc-500 mb-0.5 block capitalize">{tier}</label>
+                <input value={val} onChange={(e) => set(e.target.value)} placeholder="model-id"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-zinc-500" />
+              </div>
+            )
+          )}
         </div>
       </div>
       {error && <p className="text-xs text-red-400">{error}</p>}
