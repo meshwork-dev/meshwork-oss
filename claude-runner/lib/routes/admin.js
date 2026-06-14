@@ -124,12 +124,12 @@ function registerAdminRoutes(app) {
    */
   app.post("/api/products/onboard", requireSecret, (req, res) => {
     const body = req.body || {};
+    console.log(`[onboard] body keys=${Object.keys(body).join(",") || "(empty)"} content-type=${req.headers["content-type"]}`);
 
     const name = (body.name || "").trim();
-    if (!name) return res.status(400).json({ ok: false, error: "name is required" });
+    if (!name) return res.status(400).json({ ok: false, error: `name is required (received keys: ${Object.keys(body).join(", ") || "none"})` });
 
     const workingDir = (body.workingDir || "").trim();
-    if (!workingDir) return res.status(400).json({ ok: false, error: "workingDir is required" });
 
     // Derive product id: lowercase, hyphens only
     const productId = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
