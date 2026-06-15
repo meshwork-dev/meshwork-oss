@@ -586,6 +586,7 @@ export interface LLMProvider {
   timeoutMs?: number | null;
   enabled?: boolean;
   apiKeySet?: boolean;
+  isDefault?: boolean;
   source?: "config" | "db";
 }
 

@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { buildOpenAIUrl } = require("../llm-direct");
+const { setDefaultProviderCache } = require("../oauth");
 const db = require("../../db");
 const { FAILED_CALLBACKS_DIR, SECRET, config } = require("../config");
 const {
@@ -1243,6 +1244,35 @@ function registerAdminRoutes(app) {
       const providerConfig = await getProvider(id) || (config.providers || {})[id];
       const envFallback = providerConfig?.authTokenEnvVar ? Boolean(process.env[providerConfig.authTokenEnvVar]) : false;
       res.json({ set: set || envFallback, source: set ? "db" : (envFallback ? "env" : "none") });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // Set a provider as the system default
+  app.post("/api/providers/:id/set-default", requireSecret, async (req, res) => {
+    const { id } = req.params;
+    try {
+      const existing = await getProvider(id) || (config.providers || {})[id];
+      if (!existing) return res.status(404).json({ ok: false, error: "Provider not found" });
+      // Promote config-only providers to DB before setting default
+      if (!(await getProvider(id))) {
+        await upsertProvider({ id, type: existing.type || "claude-cli", authMode: existing.authMode, enabled: true });
+      }
+      await db.providers.setDefault(id);
+      setDefaultProviderCache(id);
+      res.json({ ok: true, defaultProvider: id });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // Clear the default provider (fall back to built-in "claude")
+  app.delete("/api/providers/default", requireSecret, async (_req, res) => {
+    try {
+      await db.providers.setDefault(null);
+      setDefaultProviderCache(null);
+      res.json({ ok: true, defaultProvider: null });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }

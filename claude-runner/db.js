@@ -886,6 +886,9 @@ const MIGRATIONS = [
 
   // 021 — jobs: store resolved PR URL from GitHub-native delivery
   `ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pr_url TEXT`,
+
+  // 022 — provider_configs: mark one provider as the system default
+  `ALTER TABLE provider_configs ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false`,
 ];
 
 async function runMigrations(client) {
@@ -2031,6 +2034,7 @@ const providersRepo = {
       modelMapping: r.model_mapping,
       timeoutMs: r.timeout_ms,
       enabled: r.enabled,
+      isDefault: r.is_default || false,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     }));
@@ -2049,6 +2053,7 @@ const providersRepo = {
       modelMapping: r.model_mapping,
       timeoutMs: r.timeout_ms,
       enabled: r.enabled,
+      isDefault: r.is_default || false,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };
@@ -2100,6 +2105,23 @@ const providersRepo = {
       [providerId]
     );
     return rows.length > 0;
+  },
+
+  async getDefault() {
+    const { rows } = await pool.query(
+      "SELECT id FROM provider_configs WHERE is_default = true LIMIT 1"
+    );
+    return rows[0]?.id || null;
+  },
+
+  async setDefault(providerId) {
+    await pool.query("UPDATE provider_configs SET is_default = false");
+    if (providerId) {
+      await pool.query(
+        "UPDATE provider_configs SET is_default = true WHERE id = $1",
+        [providerId]
+      );
+    }
   },
 };
 

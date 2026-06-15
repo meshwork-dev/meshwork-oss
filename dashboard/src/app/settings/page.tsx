@@ -492,6 +492,9 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
   const [deleting, setDeleting] = useState(false);
   const [deleteMsg, setDeleteMsg] = useState<string | null>(null);
 
+  // Default state
+  const [settingDefault, setSettingDefault] = useState(false);
+
   async function handleSaveKey() {
     if (!keyInput.trim()) return;
     setSavingKey(true);
@@ -543,6 +546,22 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
     }
   }
 
+  async function handleSetDefault() {
+    setSettingDefault(true);
+    try {
+      if (provider.isDefault) {
+        await getAPI().clearProviderDefault();
+      } else {
+        await getAPI().setProviderDefault(provider.id);
+      }
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to set default provider:", e);
+    } finally {
+      setSettingDefault(false);
+    }
+  }
+
   async function handleDelete() {
     setDeleting(true);
     setDeleteMsg(null);
@@ -565,6 +584,9 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
           <div className="flex items-center gap-2 flex-wrap">
             <h4 className="text-sm font-semibold text-white">{provider.displayName || provider.id}</h4>
             <ProviderTypeBadge type={provider.type} />
+            {provider.isDefault && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20">Default</span>
+            )}
             {provider.source === "config" && (
               <span className="px-1.5 py-0.5 rounded text-[10px] text-zinc-500 bg-zinc-800">config.json</span>
             )}
@@ -581,6 +603,17 @@ function ProviderCard({ provider, onRefresh }: ProviderCardProps) {
           }`}>
             {provider.apiKeySet ? "Key set" : "No key"}
           </span>
+          <button
+            onClick={handleSetDefault}
+            disabled={settingDefault}
+            className={`px-2 py-1 text-[11px] border rounded-md transition-colors disabled:opacity-40 ${
+              provider.isDefault
+                ? "text-amber-400 border-amber-700 hover:border-amber-500 hover:text-amber-300"
+                : "text-zinc-400 hover:text-amber-400 border-zinc-700 hover:border-amber-700"
+            }`}
+          >
+            {settingDefault ? "…" : provider.isDefault ? "Clear default" : "Set default"}
+          </button>
           <button
             onClick={() => { setEditing((e) => !e); setEditMsg(null); setConfirmDelete(false); }}
             className="px-2 py-1 text-[11px] text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 rounded-md transition-colors"

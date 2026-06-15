@@ -514,6 +514,14 @@ export class RunnerAPI {
     await this.fetch(`/api/providers/${id}/key`, { method: "POST", body: JSON.stringify({ key }) });
   }
 
+  async setProviderDefault(id: string): Promise<void> {
+    await this.fetch(`/api/providers/${id}/set-default`, { method: "POST" });
+  }
+
+  async clearProviderDefault(): Promise<void> {
+    await this.fetch("/api/providers/default", { method: "DELETE" });
+  }
+
   async testProvider(id: string): Promise<{ ok: boolean; latencyMs?: number; response?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/providers/${id}/test`, { method: "POST" });
     if (res.status === 401) { handleUnauthorized(); throw new APIError(401, "Session expired"); }

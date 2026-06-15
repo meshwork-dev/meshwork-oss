@@ -8,6 +8,16 @@ const { spawn } = require("child_process");
 const { config } = require("./config");
 const { appendLog, nowIso } = require("./util");
 
+// Cached default provider ID, loaded from DB at startup and refreshed when set
+let _defaultProvider = null;
+function getDefaultProvider() { return _defaultProvider; }
+async function loadDefaultProvider() {
+  try {
+    const db = require("../db");
+    _defaultProvider = await db.providers.getDefault();
+  } catch (_) { /* DB not ready yet — will use config fallback */ }
+}
+function setDefaultProviderCache(id) { _defaultProvider = id; }
 
 /**
  * OAuth credential cache — read from .credentials.json (bind-mounted from host).
@@ -100,9 +110,10 @@ function getSpawnEnv(job) {
   const providers = config.providers || {};
   const agentToProvider = routing.agentToProvider || {};
 
-  // Provider priority: explicit job request > agent routing > default (claude)
-  const provider = job.requestedProvider || agentToProvider[job.agent] || "claude";
-  const providerConfig = providers[provider] || providers.claude;
+  // Provider priority: explicit job request > agent routing > DB default > config default > "claude"
+  const systemDefault = _defaultProvider || config.defaultProvider || "claude";
+  const provider = job.requestedProvider || agentToProvider[job.agent] || systemDefault;
+  const providerConfig = providers[provider] || providers[systemDefault] || providers.claude;
   const providerType = providerConfig?.type || "claude-cli";
 
   const env = { ...process.env };
@@ -141,7 +152,8 @@ async function ensureOAuthValid(job) {
   const providers = config.providers || {};
   const routing = config.routing || {};
   const agentToProvider = routing.agentToProvider || {};
-  const provider = job.requestedProvider || agentToProvider[job.agent] || "claude";
+  const systemDefault = _defaultProvider || config.defaultProvider || "claude";
+  const provider = job.requestedProvider || agentToProvider[job.agent] || systemDefault;
   const providerConfig = providers[provider] || providers.claude;
   if (isApiKeyMode(providerConfig)) return true;
 
@@ -263,4 +275,6 @@ module.exports = {
   isApiKeyMode,
   ensureOAuthValid,
   refreshOAuthToken,
+  loadDefaultProvider,
+  setDefaultProviderCache,
 };
