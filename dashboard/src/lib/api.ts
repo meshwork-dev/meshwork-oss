@@ -390,7 +390,6 @@ export class RunnerAPI {
   async onboardProduct(data: OnboardProductInput): Promise<{ ok: boolean; jobId: string; productId: string }> {
     return this.fetch("/api/products/onboard", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
   }

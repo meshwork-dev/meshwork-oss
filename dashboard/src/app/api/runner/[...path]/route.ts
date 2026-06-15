@@ -80,9 +80,11 @@ async function proxy(
   const url = `${runnerBaseUrl()}/${path.map(encodeURIComponent).join("/")}${query ? `?${query}` : ""}`;
 
   const headers: Record<string, string> = { "x-runner-secret": secret };
-  const contentType = req.headers.get("content-type");
+  const rawContentType = req.headers.get("content-type");
+  // Take only the first value — duplicate headers (e.g. "application/json, application/json")
+  // cause Express body-parser to skip parsing, leaving req.body empty.
+  const contentType = rawContentType ? rawContentType.split(",")[0].trim() : null;
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
-  // Always set content-type for body-bearing requests so express.json() parses reliably
   headers["content-type"] = contentType || (hasBody ? "application/json" : "");
   if (!headers["content-type"]) delete headers["content-type"];
   const accept = req.headers.get("accept");
