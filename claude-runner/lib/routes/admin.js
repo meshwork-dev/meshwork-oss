@@ -132,7 +132,7 @@ function registerAdminRoutes(app) {
     const body = req.body || {};
 
     const name = (body.name || "").trim();
-    if (!name) return res.status(400).json({ ok: false, error: "name is required" });
+    if (!name) return res.status(400).json({ ok: false, error: "name is required", debug: { contentType: req.headers["content-type"], keys: Object.keys(body), raw: JSON.stringify(body).slice(0, 200) } });
 
     const workingDir = (body.workingDir || "").trim();
 
