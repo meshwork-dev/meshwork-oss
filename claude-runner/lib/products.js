@@ -168,9 +168,9 @@ function applyProductPluginDir(args, product) {
   while ((idx = args.indexOf('--plugin-dir')) >= 0) {
     args.splice(idx, idx + 1 < args.length ? 2 : 1);
   }
-  // Append shared + product plugin dirs
+  // Append shared + product plugin dirs (only if the directory actually exists)
   for (const dir of resolvePluginDirs(product)) {
-    args.push('--plugin-dir', dir);
+    if (fs.existsSync(dir)) args.push('--plugin-dir', dir);
   }
   return args;
 }
