@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { buildOpenAIUrl } = require("../llm-direct");
-const { setDefaultProviderCache } = require("../oauth");
+const { setDefaultProviderCache, setProviderConfigCache } = require("../oauth");
 const db = require("../../db");
 const { FAILED_CALLBACKS_DIR, SECRET, config } = require("../config");
 const {
@@ -1181,6 +1181,7 @@ function registerAdminRoutes(app) {
     }
     try {
       await upsertProvider({ id, type, displayName, baseUrl, authMode, modelMapping, timeoutMs, enabled });
+      setProviderConfigCache(id, { id, type, displayName, baseUrl, authMode, modelMapping, timeoutMs, enabled: enabled !== false });
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
@@ -1193,7 +1194,9 @@ function registerAdminRoutes(app) {
     try {
       const existing = await getProvider(id);
       if (!existing) return res.status(404).json({ ok: false, error: "Provider not found" });
-      await upsertProvider({ id, type: type || existing.type, displayName, baseUrl, authMode, modelMapping, timeoutMs, enabled });
+      const updated = { id, type: type || existing.type, displayName, baseUrl, authMode, modelMapping, timeoutMs, enabled };
+      await upsertProvider(updated);
+      setProviderConfigCache(id, updated);
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
@@ -1205,6 +1208,7 @@ function registerAdminRoutes(app) {
     if (id === "claude") return res.status(400).json({ ok: false, error: "Cannot delete the built-in claude provider" });
     try {
       await deleteProvider(id);
+      setProviderConfigCache(id, null);
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });

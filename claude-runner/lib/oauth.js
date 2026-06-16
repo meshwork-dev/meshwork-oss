@@ -19,6 +19,31 @@ async function loadDefaultProvider() {
 }
 function setDefaultProviderCache(id) { _defaultProvider = id; }
 
+// In-memory cache of DB-backed provider configs. Keyed by provider ID.
+// Populated at startup and kept in sync when admin endpoints CRUD providers.
+// Allows getSpawnEnv() (synchronous) to resolve DB providers without an async DB call.
+let _dbProviderCache = new Map();
+
+async function loadProviderConfigs() {
+  try {
+    const { getProviders } = require("./provider-store");
+    const providers = await getProviders();
+    _dbProviderCache.clear();
+    for (const p of providers) _dbProviderCache.set(p.id, p);
+    if (providers.length) console.log(`[oauth] Cached ${providers.length} DB provider config(s): ${providers.map(p => p.id).join(", ")}`);
+  } catch (e) {
+    console.error(`[oauth] loadProviderConfigs failed: ${e.message}`);
+  }
+}
+
+function setProviderConfigCache(id, cfg) {
+  if (cfg === null) {
+    _dbProviderCache.delete(id);
+  } else {
+    _dbProviderCache.set(id, { ...(_dbProviderCache.get(id) || {}), ...cfg });
+  }
+}
+
 /**
  * OAuth credential cache — read from .credentials.json (bind-mounted from host).
  * On macOS, Claude CLI stores OAuth in Keychain; Docker containers can't access Keychain,
@@ -113,7 +138,10 @@ function getSpawnEnv(job) {
   // Provider priority: explicit job request > agent routing > DB default > config default > "claude"
   const systemDefault = _defaultProvider || config.defaultProvider || "claude";
   const provider = job.requestedProvider || agentToProvider[job.agent] || systemDefault;
-  const providerConfig = providers[provider] || providers[systemDefault] || providers.claude;
+  // DB provider cache takes precedence over file-based config.providers
+  const providerConfig = _dbProviderCache.get(provider) || providers[provider]
+    || _dbProviderCache.get(systemDefault) || providers[systemDefault]
+    || providers.claude;
   const providerType = providerConfig?.type || "claude-cli";
 
   const env = { ...process.env };
@@ -276,5 +304,7 @@ module.exports = {
   ensureOAuthValid,
   refreshOAuthToken,
   loadDefaultProvider,
+  loadProviderConfigs,
   setDefaultProviderCache,
+  setProviderConfigCache,
 };

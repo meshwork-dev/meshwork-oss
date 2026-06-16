@@ -42,7 +42,7 @@ const {
   tickSprintRunner,
 } = require("./lib/sprint");
 const { loadStateFromDB } = require("./lib/worker");
-const { loadDefaultProvider } = require("./lib/oauth");
+const { loadDefaultProvider, loadProviderConfigs } = require("./lib/oauth");
 const {
   pruneWorktrees,
   reconcileMergedWorktrees,
@@ -83,6 +83,7 @@ app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] PostgreSQL connected`);
     await loadStateFromDB();
     await loadDefaultProvider();
+    await loadProviderConfigs();
   } catch (e) {
     console.error(`[${new Date().toISOString()}] PostgreSQL/state load failed: ${e.message}`);
     process.exit(1);
