@@ -563,7 +563,10 @@ async function runClaude(job) {
       appendLog(job.logFile, `\n[${nowIso()}] Process exited with code ${code}\n`);
 
       if (code !== 0) {
-        return reject(new Error(`claude exited with code ${code}. stderr: ${stderr.slice(0, 2000)}`));
+        const stdoutSnip = stdout.slice(0, 500);
+        const errDetail = `claude exited with code ${code}. stderr: ${stderr.slice(0, 2000)}${stdoutSnip ? ` stdout: ${stdoutSnip}` : ""}`;
+        console.error(`[${nowIso()}] Job ${job.jobId} (${job.agent || "no-agent"}) cwd=${spawnCwd} args=${args.join(" ")} | ${errDetail}`);
+        return reject(new Error(errDetail));
       }
 
       resolve({ stdout, stderr, lastStreamEvent });
