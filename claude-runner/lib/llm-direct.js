@@ -9,7 +9,7 @@ const { execSync } = require("child_process");
 const { config } = require("./config");
 const { resolveApiKey } = require("./provider-store");
 const { loadMcpServers, enumerateMcpTools, callMcpTool, closeMcpServers } = require("./mcp-bridge");
-const { resolveProduct, resolvePluginDir } = require("./products");
+const { resolveProduct, resolvePluginDir, resolvePluginDirs, resolveSharedSkillsDir } = require("./products");
 const { appendLog, nowIso } = require("./util");
 const { buildDeliveryPrompt, buildChatPrompt, buildAgentPrompt } = require("./prompts");
 
@@ -417,9 +417,33 @@ async function runDirectApi(job, provider, providerConfig, modelId) {
   const allTools = [...BUILTIN_TOOL_DEFS, ...mcpTools];
   const type = providerConfig?.type || "openai";
 
+  // Load agent definition body from plugin dirs (shared-skills first, then product-specific).
+  // Claude CLI injects this automatically via --plugin-dir; direct API must do it explicitly.
+  let systemPrompt = "You are a helpful AI assistant. Use the available tools to complete tasks.";
+  if (job.agent) {
+    const jobProduct = resolveProduct(job.workingDir);
+    const pluginDirs = jobProduct ? resolvePluginDirs(jobProduct) : [resolveSharedSkillsDir()].filter(Boolean);
+    for (const dir of pluginDirs) {
+      if (!dir) continue;
+      const agentFile = path.join(dir, "agents", `${job.agent}.md`);
+      try {
+        if (fs.existsSync(agentFile)) {
+          const raw = fs.readFileSync(agentFile, "utf8");
+          const bodyMatch = raw.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+          const body = bodyMatch?.[1]?.trim();
+          if (body) {
+            systemPrompt = body;
+            appendLog(job.logFile, `[${nowIso()}] Agent system prompt loaded from ${agentFile}\n`);
+            break;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
   // Build initial messages
   const messages = [
-    { role: "system", content: "You are a helpful AI assistant. Use the available tools to complete tasks." },
+    { role: "system", content: systemPrompt },
     { role: "user", content: prompt },
   ];
 
