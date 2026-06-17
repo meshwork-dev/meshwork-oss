@@ -400,7 +400,7 @@ async function runDirectApi(job, provider, providerConfig, modelId) {
   let mcpServers = new Map();
   let mcpTools = [];
   try {
-    const jobProduct = resolveProduct(job);
+    const jobProduct = resolveProduct(job.workingDir);
     const pluginDir = jobProduct ? resolvePluginDir(jobProduct) : null;
     const mcpJsonPath = pluginDir ? path.join(pluginDir, ".mcp.json") : null;
     if (mcpJsonPath && fs.existsSync(mcpJsonPath)) {
@@ -519,13 +519,19 @@ async function runDirectApi(job, provider, providerConfig, modelId) {
     appendLog(job.logFile, `[${nowIso()}] Direct API complete: ${iteration} iterations, ${totalInputTokens}in/${totalOutputTokens}out tokens, ${durationMs}ms\n`);
 
     return {
-      success: true,
-      output: fullOutput,
-      usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+      stdout: fullOutput,
+      stderr: "",
+      lastStreamEvent: {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: fullOutput,
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
+      },
     };
   } catch (e) {
     appendLog(job.logFile, `[${nowIso()}] Direct API error: ${e.message}\n`);
-    return { success: false, output: `Error: ${e.message}`, usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens } };
+    throw e;
   } finally {
     await closeMcpServers(mcpServers);
   }

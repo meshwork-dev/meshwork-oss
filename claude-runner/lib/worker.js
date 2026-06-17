@@ -821,7 +821,7 @@ async function tickWorker() {
     const taskProgress = job.issueKey ? readTaskProgress(job.issueKey) : null;
 
     // For GitHub-backed products in delivery mode: push branch + open PR
-    const jobProduct = resolveProduct(job);
+    const jobProduct = resolveProduct(job.workingDir);
     let prUrl = null;
     if (jobProduct?.github && job.mode === "delivery") {
       prUrl = await createGitHubPR(job, jobProduct).catch((e) => {
