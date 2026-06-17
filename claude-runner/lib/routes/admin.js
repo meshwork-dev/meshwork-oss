@@ -6,7 +6,7 @@ const path = require("path");
 const { buildOpenAIUrl } = require("../llm-direct");
 const { setDefaultProviderCache, setProviderConfigCache } = require("../oauth");
 const db = require("../../db");
-const { FAILED_CALLBACKS_DIR, SECRET, config } = require("../config");
+const { FAILED_CALLBACKS_DIR, PLATFORM_ROOT, SECRET, config } = require("../config");
 const {
   listPipelineDefinitions,
   savePipelineDefinition,
@@ -27,7 +27,6 @@ const {
 } = require("../products");
 const { getTotalRunningCount, jobs, jobEmitter, pipelines, queue, runningByProduct } = require("../state");
 const { nowIso, postJson } = require("../util");
-const { RUNNER_ROOT } = require("../config");
 const { createJob, enqueue } = require("../worker");
 const {
   getProviders,
@@ -147,7 +146,7 @@ function registerAdminRoutes(app) {
     }
 
     // The onboarder agent runs in the platform root so it can write to products/ and <id>-plugin/
-    const platformRoot = path.resolve(RUNNER_ROOT, "..");
+    const platformRoot = PLATFORM_ROOT;
 
     const productData = { ...body, id: productId };
     const prompt = `PRODUCT_DATA:\n${JSON.stringify(productData, null, 2)}\n\nGenerate the full product scaffold for product id "${productId}" as described in your instructions. Write all files relative to the current working directory (${platformRoot}).`;

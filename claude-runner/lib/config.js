@@ -421,6 +421,12 @@ const PORT = config.port;
 const HOST = config.host;
 const SECRET = config.secret;
 
+// Platform root: where products/ and <id>-plugin/ directories live.
+// Set PLATFORM_ROOT in env (e.g. /projects/default in Docker) so the runner
+// finds scaffolds written by the onboarder in the mounted project volume.
+// Defaults to the parent of the runner source dir for standalone / dev use.
+const PLATFORM_ROOT = process.env.PLATFORM_ROOT || path.resolve(RUNNER_ROOT, "..");
+
 const LOG_DIR = config.logDir;
 fs.mkdirSync(LOG_DIR, { recursive: true });
 
@@ -585,4 +591,5 @@ module.exports = {
   OUTBOUND_HTTP_TIMEOUT_MS,
   RETENTION_DAYS,
   RUNNER_ROOT,
+  PLATFORM_ROOT,
 };

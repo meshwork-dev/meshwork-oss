@@ -4,14 +4,14 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { RUNNER_ROOT, config } = require("./config");
+const { PLATFORM_ROOT, config } = require("./config");
 const { worktrees } = require("./state");
 const { nowIso } = require("./util");
 
 
 // ─── Product Registry ────────────────────────────────────────────────────────
 
-const productsDir = path.join(RUNNER_ROOT, "..", "products");
+const productsDir = path.join(PLATFORM_ROOT, "products");
 const products = new Map();
 
 function loadProducts() {
@@ -130,7 +130,7 @@ function resolveConfluenceSpace(productIdOrWorkingDir) {
  */
 function resolveSharedSkillsDir() {
   const rel = config.sharedSkillsDir || 'shared-skills';
-  const dir = path.isAbsolute(rel) ? rel : path.resolve(RUNNER_ROOT, '..', rel);
+  const dir = path.isAbsolute(rel) ? rel : path.resolve(PLATFORM_ROOT, rel);
   return fs.existsSync(dir) ? dir : null;
 }
 
@@ -140,9 +140,9 @@ function resolveSharedSkillsDir() {
  */
 function resolvePluginDir(product) {
   if (product?.pluginDir) {
-    return path.resolve(RUNNER_ROOT, '..', product.pluginDir);
+    return path.resolve(PLATFORM_ROOT, product.pluginDir);
   }
-  return config.pluginDir || path.resolve(RUNNER_ROOT, '..', 'meshwork-plugin');
+  return config.pluginDir || path.resolve(PLATFORM_ROOT, 'meshwork-plugin');
 }
 
 /**
