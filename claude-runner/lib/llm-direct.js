@@ -428,21 +428,41 @@ async function runDirectApi(job, provider, providerConfig, modelId) {
   let fullOutput = "";
   let iteration = 0;
 
+  // Retry delays for rate-limit errors (keeps message history, no full restart)
+  const RATE_LIMIT_DELAYS_MS = [10_000, 30_000, 60_000];
+
+  async function callProviderWithBackoff() {
+    let rateLimitAttempt = 0;
+    while (true) {
+      try {
+        if (type === "openai") {
+          return await callOpenAI(messages, allTools, modelId, apiKey, providerConfig?.baseUrl);
+        } else if (type === "gemini") {
+          return await callGemini(messages, allTools, modelId, apiKey);
+        } else if (type === "anthropic-direct") {
+          return await callAnthropicDirect(messages, allTools, modelId, apiKey);
+        } else {
+          throw new Error(`Unsupported direct-API provider type: ${type}`);
+        }
+      } catch (e) {
+        const isRateLimit = /429|overloaded|rate.?limit/i.test(e.message);
+        if (isRateLimit && rateLimitAttempt < RATE_LIMIT_DELAYS_MS.length) {
+          const delayMs = RATE_LIMIT_DELAYS_MS[rateLimitAttempt++];
+          appendLog(job.logFile, `[${nowIso()}] Rate limited — retrying in ${delayMs / 1000}s (attempt ${rateLimitAttempt}/${RATE_LIMIT_DELAYS_MS.length})\n`);
+          await new Promise(r => setTimeout(r, delayMs));
+        } else {
+          throw e;
+        }
+      }
+    }
+  }
+
   try {
     while (iteration < MAX_ITERATIONS) {
       iteration++;
       appendLog(job.logFile, `[${nowIso()}] Iteration ${iteration}/${MAX_ITERATIONS}\n`);
 
-      let result;
-      if (type === "openai") {
-        result = await callOpenAI(messages, allTools, modelId, apiKey, providerConfig?.baseUrl);
-      } else if (type === "gemini") {
-        result = await callGemini(messages, allTools, modelId, apiKey);
-      } else if (type === "anthropic-direct") {
-        result = await callAnthropicDirect(messages, allTools, modelId, apiKey);
-      } else {
-        throw new Error(`Unsupported direct-API provider type: ${type}`);
-      }
+      const result = await callProviderWithBackoff();
 
       totalInputTokens += result.usage.inputTokens;
       totalOutputTokens += result.usage.outputTokens;
